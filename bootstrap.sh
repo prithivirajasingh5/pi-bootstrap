@@ -323,6 +323,20 @@ else
 fi
 sudo systemctl enable --now docker >/dev/null 2>&1 || true
 
+# Cap container logs (default json-file logs grow forever; a crash loop could fill the disk).
+# Applies to containers created after Docker restarts, hence the recreate in step 8 if it changed.
+DOCKER_LOGCFG_CHANGED=0
+want_daemon=$'{\n  "log-driver": "json-file",\n  "log-opts": { "max-size": "10m", "max-file": "3" }\n}'
+if [ "$(sudo cat /etc/docker/daemon.json 2>/dev/null)" = "$want_daemon" ]; then
+  ok "Docker log rotation already set (10m x 3 per container)"
+else
+  [ -f /etc/docker/daemon.json ] && sudo cp -p /etc/docker/daemon.json "/etc/docker/daemon.json.bak.$(date +%Y%m%d-%H%M%S)"
+  printf '%s\n' "$want_daemon" | sudo tee /etc/docker/daemon.json >/dev/null
+  sudo systemctl restart docker
+  DOCKER_LOGCFG_CHANGED=1
+  ok "Docker log rotation set (10m x 3 per container); Docker restarted"
+fi
+
 ZSH_BIN="$(command -v zsh)"
 if [ "$(getent passwd "$USER" | cut -d: -f7)" = "$ZSH_BIN" ]; then
   ok "login shell already zsh"
@@ -409,7 +423,9 @@ if [ "$DO_START" -eq 0 ]; then
   info "skipped (--no-start). Start later with: cd $STACK_DIR && docker compose up -d"
 else
   # sudo: the docker group membership from step 3 only applies after re-login.
-  (cd "$STACK_DIR" && sudo docker compose up -d) 2>&1 | { grep -vE ' (Pulling|Waiting|Downloading|Extracting|Verifying|Pull complete|Download complete|Already exists)' || true; } | tail -15
+  # Recreate existing containers if the log settings just changed (they are fixed at creation).
+  recreate=(); [ "$DOCKER_LOGCFG_CHANGED" -eq 1 ] && recreate=(--force-recreate)
+  (cd "$STACK_DIR" && sudo docker compose up -d "${recreate[@]}") 2>&1 | { grep -vE ' (Pulling|Waiting|Downloading|Extracting|Verifying|Pull complete|Download complete|Already exists)' || true; } | tail -15
   info "waiting for health checks (up to 10 min; nginx may renew its certificate first)..."
   for _ in $(seq 1 60); do
     st="$(sudo docker compose -f "$STACK_DIR/docker-compose.yml" ps --format '{{.Status}}')"
