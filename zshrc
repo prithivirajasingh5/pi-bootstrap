@@ -9,8 +9,8 @@ PROMPT_EOL_MARK=""                  # no '%' at the end of output without a trai
 
 # ---- history ----------------------------------------------------------------
 HISTFILE=~/.zsh_history
-HISTSIZE=10000
-SAVEHIST=20000
+HISTSIZE=100000     # commands kept in memory for this shell
+SAVEHIST=100000     # commands written to ~/.zsh_history
 setopt hist_expire_dups_first hist_ignore_dups hist_ignore_space hist_verify share_history
 
 # ---- key bindings (emacs style + the usual extras) ---------------------------
