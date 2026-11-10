@@ -11,8 +11,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/prithivirajasingh5/pi-bootst
 Run it as `pi` in an SSH session on the Pi. It is **safe to re-run**: each step checks first and
 skips what is already done, so after a failure just fix the cause and run it again.
 
-> This repo is public on purpose (so `curl` works without logging in). It contains **no secrets**;
-> the secrets the script needs are typed at hidden prompts and never stored by it.
+> This repo is public on purpose (so `curl` works without logging in). It holds **no plaintext secrets**:
+> the only secret material is `secrets.age`, encrypted with a passphrase that is kept offline.
 
 ## Before you run it
 
@@ -20,7 +20,7 @@ skips what is already done, so after a failure just fix the cause and run it aga
    `flatpak install flathub org.raspberrypi.rpi-imager`), setting hostname `opi`, user `pi`,
    and SSH with your laptop's public key. Full details: [`docker/RESTORE.md`](https://github.com/prithivirajasingh5/docker/blob/main/RESTORE.md), Part B.
 2. Boot the Pi and `ssh pi@opi.local`.
-3. Have the GitHub token and git-crypt key line ready (below).
+3. Have your **bootstrap passphrase** ready (Google Drive → Confidential). That is the only secret you need.
 
 ## What it asks (all up front)
 
@@ -29,8 +29,9 @@ After the one-time sudo password, it asks **three questions** and then runs unat
 | Prompt | When | What to give it |
 |---|---|---|
 | **sudo password** | only if `pi` can't sudo without one | the `pi` password set in Imager (asked once; then passwordless sudo is set up) |
-| **Question 1/3 — GitHub token** | only if this Pi's deploy key isn't on GitHub yet | a [fine-grained token](https://github.com/settings/personal-access-tokens/new): *Only select repositories → `docker`*, permission *Administration: Read and write*, short expiry. The key is registered immediately and the token discarded. Press Enter instead to add the printed key by hand |
-| **Question 1/3 — git-crypt key** | only if `~/docker` is missing or still encrypted | one base64 line. On a machine with the repo unlocked: `cd ~/claude/docker && git-crypt export-key - \| base64 -w0; echo` — or the copy saved in **Google Drive → Confidential**. Validated on the spot |
+| **Question 1/3 — bootstrap passphrase** | only if GitHub doesn't accept this Pi yet or `~/docker` needs unlocking | Answer Enter (yes), then type the passphrase when `age` asks. It decrypts [`secrets.age`](#secrets-bundle) and supplies both the deploy key and the git-crypt key |
+| *(fallback)* GitHub token | if you answer `n` above, or the bundle can't be opened | a [fine-grained token](https://github.com/settings/personal-access-tokens/new): *Only select repositories → `docker`*, permission *Administration: Read and write*, short expiry. Registers this Pi's own deploy key, then discarded. Enter = add the printed key by hand |
+| *(fallback)* git-crypt key | same | one base64 line: `cd ~/claude/docker && git-crypt export-key - \| base64 -w0; echo` (or the copy in Drive) |
 | **Question 2/3 — Wi-Fi chip** | unless already disabled | `y` adds `dtoverlay=disable-wifi` to `/boot/firmware/config.txt` (default **No**). Warns first if you are connected over Wi-Fi or Ethernet has no link |
 | **Question 3/3 — Bluetooth chip** | unless already disabled | `y` adds `dtoverlay=disable-bt` and disables the `bluetooth` service (default **No**) |
 
@@ -62,10 +63,33 @@ and heat; the trade-off is losing Wi-Fi as a backup link if Ethernet fails.
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/prithivirajasingh5/pi-bootstrap/main/bootstrap.sh) --no-stack   # zsh, folders, Wi-Fi/BT only
 bash <(curl -fsSL https://raw.githubusercontent.com/prithivirajasingh5/pi-bootstrap/main/bootstrap.sh) --no-start   # everything but starting containers
+bash <(curl -fsSL https://raw.githubusercontent.com/prithivirajasingh5/pi-bootstrap/main/bootstrap.sh) --check-secrets   # test the bundle + passphrase, change nothing
 ```
 
 Non-interactive inputs (avoid on shared machines; environment variables can be seen in `ps`):
 `GITHUB_TOKEN`, `GITCRYPT_KEY_B64`, `DISABLE_WIFI` / `DISABLE_BT` (`yes`/`no`), `STACK_DIR` (default `~/docker`).
+
+## Secrets bundle
+
+`secrets.age` is an [age](https://age-encryption.org) file encrypted with your passphrase (scrypt, work
+factor 2^18). Inside is a tar with three fixed names:
+
+| File | Used as |
+|---|---|
+| `deploy_key`, `deploy_key.pub` | a **shared** read-write GitHub deploy key for the `docker` repo (titled *opi shared (pi-bootstrap …)*), installed as `~/.ssh/id_ed25519_github` |
+| `gitcrypt.key` | the `docker` repo's git-crypt key, used once for `git-crypt unlock` and then shredded |
+
+- **Create / rotate** (laptop, real terminal): `./make-secrets.sh` — generates a new shared deploy key,
+  encrypts the bundle (press Enter at age's prompt to get a strong generated passphrase; save it in Drive),
+  makes you decrypt once to prove the saved passphrase, registers the key, and offers to delete the old
+  shared key. Then commit and push `secrets.age`.
+- **Check** any time (on a Pi): `bootstrap.sh --check-secrets`. It proves the passphrase opens the bundle,
+  the deploy key authenticates and the git-crypt key matches `~/docker`.
+- **Look inside** without writing files: `age -d secrets.age | tar -tv`.
+- **Security:** the file is public, so its protection is the passphrase alone; a strong generated one is
+  infeasible to brute-force. Anyone with the passphrase gets read-write access to the `docker` repo and its
+  secrets. If it may have leaked: run `make-secrets.sh` (new key + passphrase), delete the old deploy key,
+  and change the secrets inside the `docker` repo (the git-crypt key itself can't be revoked).
 
 ## After it finishes
 
