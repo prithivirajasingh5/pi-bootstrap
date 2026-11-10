@@ -435,6 +435,17 @@ else
   sudo docker compose -f "$STACK_DIR/docker-compose.yml" ps --format 'table {{.Service}}\t{{.Status}}'
 fi
 
+# Container watchdog (from the docker repo's host/ folder): every 5 min, Telegram alerts for crash
+# loops / unhealthy containers / full disk, and stops runaway crash loops.
+if [ -f "$STACK_DIR/host/container-watchdog.timer" ]; then
+  for u in container-watchdog.service container-watchdog.timer; do
+    sed -e "s#/home/pi/docker#$STACK_DIR#g" -e "s#^User=pi\$#User=$USER#" "$STACK_DIR/host/$u" | sudo tee "/etc/systemd/system/$u" >/dev/null
+  done
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now container-watchdog.timer >/dev/null 2>&1
+  ok "container-watchdog timer enabled (every 5 min; logs: journalctl -u container-watchdog)"
+fi
+
 # =========================================================================================
 step "Finished"
 info "Log out and back in (or run: exec zsh) for zsh and the docker group to take effect."
