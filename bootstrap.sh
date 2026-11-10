@@ -7,12 +7,17 @@
 # Options:
 #   --no-stack   only shell setup, folders and Wi-Fi/Bluetooth choices (no GitHub, clone, unlock or docker start)
 #   --no-start   do everything except `docker compose up -d`
+#   --check-secrets  only test the published secrets.age: decrypt it with your passphrase, prove the
+#                    bundled deploy key works on GitHub and the git-crypt key matches ~/docker (changes nothing)
 #   -h, --help
 #
 # Flow: sudo setup -> three questions (1/3 GitHub, 2/3 Wi-Fi chip, 3/3 Bluetooth chip) -> the rest
 # runs unattended. Safe to re-run: every step checks first and skips what is already done.
 # Secrets are only ever typed at hidden prompts; nothing secret is stored by this script
 # except what git-crypt itself keeps in ~/docker/.git/git-crypt/keys/.
+#
+# Question 1/3 normally needs only your bootstrap passphrase: it decrypts secrets.age (made by
+# make-secrets.sh) holding a shared deploy key + the git-crypt key. Fallback: GitHub token + pasted key.
 #
 # Optional non-interactive inputs (avoid on shared machines: env vars can leak via `ps`):
 #   GITHUB_TOKEN       token used once to register the Pi's deploy key
@@ -35,15 +40,18 @@ MEDIA_DIRS=(movies movies_archive downloads_in_progress Downloads)   # must matc
 GITHUB_ED25519_FP="SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"  # github.com's published key
 PACKAGES=(git git-crypt docker.io docker-compose zsh zsh-syntax-highlighting zsh-autosuggestions curl ca-certificates
           nload iftop vnstat)   # network: live graph / per-connection / live + daily-monthly history
+SECRETS_URL="$BOOTSTRAP_RAW/secrets.age"
 CONFIG_TXT=/boot/firmware/config.txt; [ -f "$CONFIG_TXT" ] || CONFIG_TXT=/boot/config.txt   # older Pi OS
 
 DO_STACK=1
 DO_START=1
+CHECK_SECRETS=0
 for arg in "$@"; do
   case "$arg" in
+    --check-secrets) CHECK_SECRETS=1 ;;
     --no-stack) DO_STACK=0 ;;
     --no-start) DO_START=0 ;;
-    -h|--help) sed -n '2,24p' "$0" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0" 2>/dev/null || true; exit 0 ;;
     *) echo "Unknown option: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -61,7 +69,11 @@ trap '[ "$BASH_SUBSHELL" -eq 0 ] && printf "\n\033[1;31mFailed during: %s (line 
 
 # The git-crypt key lives in a temp file between question 1/3 and the unlock step; always shred it.
 KEYFILE=""
-cleanup() { if [ -n "$KEYFILE" ] && [ -f "$KEYFILE" ]; then shred -u "$KEYFILE"; fi; }
+BUNDLE_DIR=""
+cleanup() {
+  if [ -n "$KEYFILE" ] && [ -f "$KEYFILE" ]; then shred -u "$KEYFILE"; fi
+  if [ -n "$BUNDLE_DIR" ] && [ -d "$BUNDLE_DIR" ]; then find "$BUNDLE_DIR" -type f -exec shred -u {} + 2>/dev/null || true; rm -rf "$BUNDLE_DIR"; fi
+}
 trap cleanup EXIT
 
 # Prompts read from the terminal, so they also work when the script itself arrives on stdin.
@@ -86,6 +98,31 @@ github_ok() { local g; g="$(github_greeting)"; [[ "$g" == *"successfully authent
 is_locked() { [ "$(head -c 9 "$STACK_DIR/.env" 2>/dev/null | tail -c 8)" = "GITCRYPT" ]; }
 overlay_set() { grep -qx "dtoverlay=$1" "$CONFIG_TXT"; }
 
+# Download secrets.age and decrypt it into BUNDLE_DIR (age prompts for the passphrase on the terminal).
+open_bundle() {
+  command -v age >/dev/null || { info "installing age (decrypts the bundle)"; sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -qq age >/dev/null; }
+  BUNDLE_DIR="$(mktemp -d)"; chmod 700 "$BUNDLE_DIR"
+  if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/secrets.age" ]; then cp "$SCRIPT_DIR/secrets.age" "$BUNDLE_DIR/secrets.age"
+  else curl -fsSL "$SECRETS_URL" -o "$BUNDLE_DIR/secrets.age" 2>/dev/null || { warn "no secrets.age published at $SECRETS_URL"; return 1; }; fi
+  local attempt
+  for attempt in 1 2 3; do
+    info "enter your bootstrap passphrase (Google Drive -> Confidential); input is hidden"
+    if age -d -o "$BUNDLE_DIR/bundle.tar" "$BUNDLE_DIR/secrets.age" </dev/tty; then
+      tar -C "$BUNDLE_DIR" -xf "$BUNDLE_DIR/bundle.tar" && rm -f "$BUNDLE_DIR/bundle.tar"
+      [ -s "$BUNDLE_DIR/deploy_key" ] && [ -s "$BUNDLE_DIR/gitcrypt.key" ] || { warn "bundle is missing files"; return 1; }
+      ok "bundle decrypted"; return 0
+    fi
+    warn "could not decrypt (wrong passphrase?) — attempt $attempt/3"
+  done
+  return 1
+}
+# Does a given private key authenticate to GitHub? (Isolated from ~/.ssh/config and any agent.)
+key_works() {
+  local g
+  g="$(ssh -n -T -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -i "$1" git@github.com 2>&1 || true)"
+  [[ "$g" == *"successfully authenticated"* ]]
+}
+
 # =========================================================================================
 step "Preflight"
 [ "$(id -u)" -ne 0 ] || die "Run as your normal user (pi), not root. The script uses sudo where needed."
@@ -109,6 +146,23 @@ else
   ok "added /etc/sudoers.d/010_${USER}-nopasswd (undo: sudo rm that file)"
 fi
 
+if [ "$CHECK_SECRETS" -eq 1 ]; then
+  step "Check secrets.age (read-only)"
+  [ -f "$HOME/.ssh/known_hosts" ] && ssh-keygen -F github.com >/dev/null 2>&1 || die "github.com is not in ~/.ssh/known_hosts yet; run the normal bootstrap first"
+  open_bundle || die "could not open the bundle"
+  if key_works "$BUNDLE_DIR/deploy_key"; then ok "bundled deploy key authenticates to GitHub ($(ssh-keygen -lf "$BUNDLE_DIR/deploy_key.pub" | awk '{print $2}'))"
+  else die "bundled deploy key is NOT accepted by GitHub (revoked?) — re-run make-secrets.sh"; fi
+  if [ -f "$STACK_DIR/.git/git-crypt/keys/default" ]; then
+    cmp -s "$BUNDLE_DIR/gitcrypt.key" "$STACK_DIR/.git/git-crypt/keys/default" \
+      && ok "bundled git-crypt key is identical to the key $STACK_DIR uses" \
+      || die "bundled git-crypt key differs from $STACK_DIR's key"
+  else
+    [ "$(head -c 9 "$BUNDLE_DIR/gitcrypt.key" | tail -c 8)" = "GITCRYPT" ] && ok "bundled git-crypt key has a valid header ($STACK_DIR not unlocked here to compare)"
+  fi
+  step "secrets.age is good: your passphrase restores a fresh Pi"
+  exit 0
+fi
+
 printf '\n\033[1mThree questions first; everything after them runs unattended.\033[0m\n'
 
 # =========================================================================================
@@ -129,10 +183,36 @@ else
     cat "$hk" >>"$HOME/.ssh/known_hosts"; rm -f "$hk"; info "trusted github.com ($fp, matches GitHub's published key)"
   fi
 
-  # (a) GitHub token -> register the deploy key now, then forget the token.
-  if github_ok; then
-    g="$(github_greeting)"; g="${g#*Hi }"; ok "GitHub already accepts this Pi's key: Hi ${g%%!*}"
-  else
+  need_github=0; github_ok || need_github=1
+  need_key=0; { [ -d "$STACK_DIR/.git" ] && ! is_locked; } || need_key=1
+  [ "$need_github" -eq 0 ] && { g="$(github_greeting)"; g="${g#*Hi }"; ok "GitHub already accepts this Pi's key: Hi ${g%%!*}"; }
+  [ "$need_key" -eq 0 ] && ok "$STACK_DIR is already unlocked; no git-crypt key needed"
+
+  # Preferred: one passphrase opens secrets.age (shared deploy key + git-crypt key).
+  if [ "$need_github" -eq 1 ] || [ "$need_key" -eq 1 ]; then
+    use_bundle=0
+    if [ -z "${GITHUB_TOKEN:-}${GITCRYPT_KEY_B64:-}" ]; then
+      a="$(ask "    Use your bootstrap passphrase to unlock the secrets bundle? [Y/n] (n = GitHub token + pasted key) ")"
+      [[ "${a,,}" =~ ^(n|no)$ ]] || use_bundle=1
+    fi
+    if [ "$use_bundle" -eq 1 ] && open_bundle; then
+      if [ "$need_github" -eq 1 ]; then
+        if [ -f "$DEPLOY_KEY" ]; then mv "$DEPLOY_KEY" "$DEPLOY_KEY.bak.$(date +%s)"; mv "$DEPLOY_KEY.pub" "$DEPLOY_KEY.pub.bak.$(date +%s)" 2>/dev/null || true; info "backed up the existing (unregistered) deploy key"; fi
+        install -m 600 "$BUNDLE_DIR/deploy_key" "$DEPLOY_KEY"; install -m 644 "$BUNDLE_DIR/deploy_key.pub" "$DEPLOY_KEY.pub"
+        github_ok || die "the bundled deploy key is not accepted by GitHub (revoked? re-run make-secrets.sh)"
+        ok "installed the shared deploy key from the bundle; GitHub accepts it"; need_github=0
+      fi
+      if [ "$need_key" -eq 1 ]; then
+        KEYFILE="$(mktemp)"; chmod 600 "$KEYFILE"; cp "$BUNDLE_DIR/gitcrypt.key" "$KEYFILE"
+        ok "git-crypt key taken from the bundle (temp file, shredded after step 7)"; need_key=0
+      fi
+    elif [ "$use_bundle" -eq 1 ]; then
+      warn "falling back to GitHub token + pasted git-crypt key"
+    fi
+  fi
+
+  # Fallback (a): GitHub token -> register this Pi's own deploy key now, then forget the token.
+  if [ "$need_github" -eq 1 ]; then
     pub="$(cat "$DEPLOY_KEY.pub")"
     token="${GITHUB_TOKEN:-}"
     if [ -z "$token" ]; then
@@ -172,10 +252,8 @@ else
     ok "GitHub accepts this Pi's key"
   fi
 
-  # (b) git-crypt key -> only if the repo will need unlocking; validated now, used in step 7.
-  if [ -d "$STACK_DIR/.git" ] && ! is_locked; then
-    ok "$STACK_DIR is already unlocked; no git-crypt key needed"
-  else
+  # Fallback (b): git-crypt key pasted as base64 -> validated now, used in step 7.
+  if [ "$need_key" -eq 1 ]; then
     key_b64="${GITCRYPT_KEY_B64:-}"
     if [ -z "$key_b64" ]; then
       info "Paste the docker repo's git-crypt key as one base64 line. On a machine with the repo unlocked:"
