@@ -30,7 +30,8 @@ GIT_NAME="Prithivirajasingh K"
 GIT_EMAIL="prithivirajasingh5@gmail.com"
 MEDIA_DIRS=(movies movies_archive downloads_in_progress Downloads)   # must match .env paths
 GITHUB_ED25519_FP="SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"  # github.com's published key
-PACKAGES=(git git-crypt docker.io docker-compose zsh zsh-syntax-highlighting zsh-autosuggestions curl ca-certificates)
+PACKAGES=(git git-crypt docker.io docker-compose zsh zsh-syntax-highlighting zsh-autosuggestions curl ca-certificates
+          nload iftop vnstat)   # network: live graph / per-connection / live + daily-monthly history
 
 DO_STACK=1
 DO_START=1

@@ -39,7 +39,7 @@ an internet-facing machine.
 | # | Step |
 |---|---|
 | 1 | Passwordless sudo for `pi` (Raspberry Pi OS default; Imager's setup omits it) |
-| 2 | `apt install` git, git-crypt, docker.io, docker-compose (Compose v2), zsh, zsh-syntax-highlighting, zsh-autosuggestions |
+| 2 | `apt install` git, git-crypt, docker.io, docker-compose (Compose v2), zsh, zsh-syntax-highlighting, zsh-autosuggestions, and network monitors nload, iftop, vnstat |
 | 3 | Adds `pi` to the `docker` group, makes zsh the login shell, installs [`zshrc`](zshrc) as `~/.zshrc` (existing one backed up) |
 | 4 | Creates `~/movies`, `~/movies_archive`, `~/downloads_in_progress`, `~/Downloads` (paths used by the stack's `.env`) |
 | 5 | Git identity; creates `~/.ssh/id_ed25519_github` used only for github.com; trusts github.com after checking its published fingerprint |
@@ -78,6 +78,15 @@ Matches the laptop's look without oh-my-zsh:
 - **Syntax highlighting**: unknown commands turn red as you type; paths are underlined.
 - **Completion**: Tab opens an arrow-key menu; case-insensitive; Shift+Tab goes back.
 - Aliases: `ll`, `la`, `l`, `dc` = `docker compose`, `dps` = compact `docker ps`.
+
+## Network monitoring
+
+| Command | Answers |
+|---|---|
+| `nload eth0` | How fast right now? (live in/out graph; ←/→ switch interface, `q` quits) |
+| `vnstat -l` | How fast right now? (live numbers) |
+| `vnstat -d` / `vnstat -m` | How much per day / per month? (history kept by the `vnstat` service; starts empty) |
+| `sudo iftop -i eth0` | What is using the bandwidth? (per connection; `q` quits) |
 
 ## Testing notes
 
