@@ -52,7 +52,7 @@ and heat; the trade-off is losing Wi-Fi as a backup link if Ethernet fails.
 | — | Questions 1/3–3/3 (above). Question 1/3 also creates `~/.ssh/id_ed25519_github` (github.com only), checks github.com's published fingerprint and registers the deploy key |
 | 2/8 | `apt install` git, git-crypt, docker.io, docker-compose (Compose v2), zsh, zsh-syntax-highlighting, zsh-autosuggestions, and network monitors nload, iftop, vnstat |
 | 3/8 | Adds `pi` to the `docker` group; caps container logs (`/etc/docker/daemon.json`: 10 MB × 3 per container); makes zsh the login shell, installs [`zshrc`](zshrc) as `~/.zshrc` (existing one backed up) |
-| 4/8 | Creates `~/movies`, `~/movies_archive`, `~/downloads_in_progress`, `~/Downloads` (paths used by the stack's `.env`) |
+| 4/8 | Creates `~/movies`, `~/movies_archive`, `~/Downloads` (paths used by the stack's `.env`) |
 | 5/8 | Applies the Wi-Fi / Bluetooth choices to `config.txt` (reboot needed; the script tells you) |
 | 6/8 | Git identity; clones `docker` to `~/docker`, or fast-forwards it if it exists and has no local changes |
 | 7/8 | Unlocks it with the git-crypt key from question 1/3 (temp key file shredded afterwards) — skipped if already unlocked |

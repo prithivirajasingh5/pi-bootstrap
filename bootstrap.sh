@@ -36,7 +36,7 @@ STACK_DIR="${STACK_DIR:-$HOME/docker}"
 DEPLOY_KEY="$HOME/.ssh/id_ed25519_github"
 GIT_NAME="Prithivirajasingh K"
 GIT_EMAIL="prithivirajasingh5@gmail.com"
-MEDIA_DIRS=(movies movies_archive downloads_in_progress Downloads)   # must match .env paths
+MEDIA_DIRS=(movies movies_archive Downloads)   # must match .env paths
 GITHUB_ED25519_FP="SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"  # github.com's published key
 PACKAGES=(git git-crypt docker.io docker-compose zsh zsh-syntax-highlighting zsh-autosuggestions curl ca-certificates
           nload iftop vnstat)   # network: live graph / per-connection / live + daily-monthly history
