@@ -7,6 +7,13 @@ setopt autocd interactivecomments magicequalsubst nonomatch notify numericglobso
 WORDCHARS=${WORDCHARS//\/}          # Ctrl+W stops at '/'
 PROMPT_EOL_MARK=""                  # no '%' at the end of output without a trailing newline
 
+# ---- PATH -------------------------------------------------------------------
+# All custom scripts (messenger, ren, run, ...) live in the docker stack's python-jobs/jobs folder,
+# so they can be run by name. Appended, so a system command with the same name still wins.
+# (zsh shells only: sudo, cron and systemd use their own PATH; call those by full path.)
+typeset -U path                     # no duplicates when this file is re-sourced
+[ -d ~/docker/python-jobs/jobs ] && path+=(~/docker/python-jobs/jobs)
+
 # ---- history ----------------------------------------------------------------
 HISTFILE=~/.zsh_history
 HISTSIZE=120000     # commands kept in memory for this shell

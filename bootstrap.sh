@@ -435,12 +435,11 @@ else
   sudo docker compose -f "$STACK_DIR/docker-compose.yml" ps --format 'table {{.Service}}\t{{.Status}}'
 fi
 
-# `messenger` on the host (symlink to the stack's script): `messenger 'text'` sends a Telegram
-# message from the Pi shell, and the watchdog sends its alerts with it. Token/chat id come from
-# $STACK_DIR/.env (messenger reads ~/docker/.env; set MESSENGER_ENV_FILE for another path).
-if [ -f "$STACK_DIR/python-jobs/jobs/messenger" ]; then
-  sudo ln -sfn "$STACK_DIR/python-jobs/jobs/messenger" /usr/local/bin/messenger
-  ok "messenger command installed (/usr/local/bin/messenger)"
+# Custom scripts (messenger, ren, run, ...) are on PATH via ~/.zshrc (python-jobs/jobs folder).
+# Earlier versions symlinked messenger into /usr/local/bin; remove that so there's one way.
+if [ -L /usr/local/bin/messenger ] && [[ "$(readlink /usr/local/bin/messenger)" == "$STACK_DIR/"* ]]; then
+  sudo rm /usr/local/bin/messenger
+  ok "removed old /usr/local/bin/messenger symlink (scripts are on PATH via ~/.zshrc now)"
 fi
 
 # Container watchdog (from the docker repo's host/ folder): every 5 min, alerts via messenger for
