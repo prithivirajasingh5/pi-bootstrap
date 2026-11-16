@@ -435,8 +435,16 @@ else
   sudo docker compose -f "$STACK_DIR/docker-compose.yml" ps --format 'table {{.Service}}\t{{.Status}}'
 fi
 
-# Container watchdog (from the docker repo's host/ folder): every 5 min, Telegram alerts for crash
-# loops / unhealthy containers / full disk, and stops runaway crash loops.
+# `messenger` on the host (symlink to the stack's script): `messenger 'text'` sends a Telegram
+# message from the Pi shell, and the watchdog sends its alerts with it. Token/chat id come from
+# $STACK_DIR/.env (messenger reads ~/docker/.env; set MESSENGER_ENV_FILE for another path).
+if [ -f "$STACK_DIR/python-jobs/jobs/messenger" ]; then
+  sudo ln -sfn "$STACK_DIR/python-jobs/jobs/messenger" /usr/local/bin/messenger
+  ok "messenger command installed (/usr/local/bin/messenger)"
+fi
+
+# Container watchdog (from the docker repo's host/ folder): every 5 min, alerts via messenger for
+# crash loops / unhealthy or stopped containers / full disk, and stops runaway crash loops.
 if [ -f "$STACK_DIR/host/container-watchdog.timer" ]; then
   for u in container-watchdog.service container-watchdog.timer; do
     sed -e "s#/home/pi/docker#$STACK_DIR#g" -e "s#^User=pi\$#User=$USER#" "$STACK_DIR/host/$u" | sudo tee "/etc/systemd/system/$u" >/dev/null

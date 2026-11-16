@@ -56,7 +56,7 @@ and heat; the trade-off is losing Wi-Fi as a backup link if Ethernet fails.
 | 5/8 | Applies the Wi-Fi / Bluetooth choices to `config.txt` (reboot needed; the script tells you) |
 | 6/8 | Git identity; clones `docker` to `~/docker`, or fast-forwards it if it exists and has no local changes |
 | 7/8 | Unlocks it with the git-crypt key from question 1/3 (temp key file shredded afterwards) — skipped if already unlocked |
-| 8/8 | `docker compose up -d`, waits for health checks, prints the status table; enables the **container-watchdog** timer (Telegram alerts for crash loops / unhealthy containers / full disk, auto-stops runaway crash loops) |
+| 8/8 | `docker compose up -d`, waits for health checks, prints the status table; installs the `messenger` command and enables the **container-watchdog** timer (Telegram alerts via `messenger` for crash loops / unhealthy or stopped containers / full disk, auto-stops runaway crash loops) |
 
 ## Options
 
