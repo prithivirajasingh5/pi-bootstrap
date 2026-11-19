@@ -24,16 +24,17 @@ skips what is already done, so after a failure just fix the cause and run it aga
 
 ## What it asks (all up front)
 
-After the one-time sudo password, it asks **three questions** and then runs unattended:
+After the one-time sudo password, it asks **four questions** and then runs unattended:
 
 | Prompt | When | What to give it |
 |---|---|---|
 | **sudo password** | only if `pi` can't sudo without one | the `pi` password set in Imager (asked once; then passwordless sudo is set up) |
-| **Question 1/3 — bootstrap passphrase** | only if GitHub doesn't accept this Pi yet or `~/docker` needs unlocking | Answer Enter (yes), then type the passphrase when `age` asks. It decrypts [`secrets.age`](#secrets-bundle) and supplies both the deploy key and the git-crypt key |
+| **Question 1/4 — bootstrap passphrase** | only if GitHub doesn't accept this Pi yet or `~/docker` needs unlocking | Answer Enter (yes), then type the passphrase when `age` asks. It decrypts [`secrets.age`](#secrets-bundle) and supplies both the deploy key and the git-crypt key |
 | *(fallback)* GitHub token | if you answer `n` above, or the bundle can't be opened | a [fine-grained token](https://github.com/settings/personal-access-tokens/new): *Only select repositories → `docker`*, permission *Administration: Read and write*, short expiry. Registers this Pi's own deploy key, then discarded. Enter = add the printed key by hand |
 | *(fallback)* git-crypt key | same | one base64 line: `cd ~/claude/docker && git-crypt export-key - \| base64 -w0; echo` (or the copy in Drive) |
-| **Question 2/3 — Wi-Fi chip** | unless already disabled | `y` adds `dtoverlay=disable-wifi` to `/boot/firmware/config.txt` (default **No**). Warns first if you are connected over Wi-Fi or Ethernet has no link |
-| **Question 3/3 — Bluetooth chip** | unless already disabled | `y` adds `dtoverlay=disable-bt` and disables the `bluetooth` service (default **No**) |
+| **Question 2/4 — Wi-Fi chip** | unless already disabled | `y` adds `dtoverlay=disable-wifi` to `/boot/firmware/config.txt` (default **No**). Warns first if you are connected over Wi-Fi or Ethernet has no link |
+| **Question 3/4 — Bluetooth chip** | unless already disabled | `y` adds `dtoverlay=disable-bt` and disables the `bluetooth` service (default **No**) |
+| **Question 4/4 — Docker stack version** | unless `--no-stack` | Lists **latest main** (default: just press Enter) and every [stable release](#stable-releases) of the `docker` repo, newest first, and shows which one the Pi runs now. Type the number or the name |
 
 The git-crypt key unlocks **only the `docker` repo**. Your GPG master key (which unlocks every repo)
 never goes to the Pi, and the Pi's GitHub key can reach only the `docker` repo — sensible limits for
@@ -49,14 +50,14 @@ and heat; the trade-off is losing Wi-Fi as a backup link if Ethernet fails.
 | Step | |
 |---|---|
 | 1/8 | Passwordless sudo for `pi` (Raspberry Pi OS default; Imager's setup omits it) |
-| — | Questions 1/3–3/3 (above). Question 1/3 also creates `~/.ssh/id_ed25519_github` (github.com only), checks github.com's published fingerprint and registers the deploy key |
+| — | Questions 1/4–4/4 (above). Question 1/4 also creates `~/.ssh/id_ed25519_github` (github.com only), checks github.com's published fingerprint and registers the deploy key |
 | 2/8 | `apt install` git, git-crypt, docker.io, docker-compose (Compose v2), zsh, zsh-syntax-highlighting, zsh-autosuggestions, and network monitors nload, iftop, vnstat |
 | 3/8 | Adds `pi` to the `docker` group; caps container logs (`/etc/docker/daemon.json`: 10 MB × 3 per container); makes zsh the login shell, installs [`zshrc`](zshrc) as `~/.zshrc` (existing one backed up), which puts the stack's custom scripts (`~/docker/python-jobs/jobs`: `messenger`, `ren`, `run`, …) on PATH |
 | 4/8 | Creates `~/movies`, `~/movies_archive`, `~/Downloads` (paths used by the stack's `.env`) |
 | 5/8 | Applies the Wi-Fi / Bluetooth choices to `config.txt` (reboot needed; the script tells you) |
-| 6/8 | Git identity; clones `docker` to `~/docker`, or fast-forwards it if it exists and has no local changes. Changes the apps make to their own config (`qBittorrent.conf`, certbot's `renewal/*.conf`) don't count: those are set aside, the repo is updated, and the Pi's values are put back (`--autostash`) |
-| 7/8 | Unlocks it with the git-crypt key from question 1/3 (temp key file shredded afterwards) — skipped if already unlocked |
-| 8/8 | `docker compose up -d` (builds the local images `python-jobs` and `printmail`, the email-to-print service with its own CUPS: nothing printing-related is installed on the Pi itself), waits for health checks, prints the status table; enables the **container-watchdog** timer (Telegram alerts via `messenger` for crash loops / unhealthy or stopped containers / full disk, auto-stops runaway crash loops) |
+| 6/8 | Git identity; clones `docker` to `~/docker`, or updates an existing checkout; then switches it to the version from question 4/4 (main, or the release tag). Refuses if the checkout has local changes, except changes the apps make to their own config (`qBittorrent.conf`, certbot's `renewal/*.conf`): those are stashed, the version switched, and the Pi's values put back. If GitHub changed the same file, GitHub's version wins and the Pi's stays in `git stash list` |
+| 7/8 | Unlocks it with the git-crypt key from question 1/4 (temp key file shredded afterwards) — skipped if already unlocked |
+| 8/8 | `docker compose up -d --build` (recreating the containers if step 6 changed the version; builds the local images `python-jobs` and `printmail`, the email-to-print service with its own CUPS: nothing printing-related is installed on the Pi itself), waits for health checks, prints the status table; enables the **container-watchdog** timer (Telegram alerts via `messenger` for crash loops / unhealthy or stopped containers / full disk, auto-stops runaway crash loops) |
 
 ## Options
 
@@ -67,7 +68,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/prithivirajasingh5/pi-bootst
 ```
 
 Non-interactive inputs (avoid on shared machines; environment variables can be seen in `ps`):
-`GITHUB_TOKEN`, `GITCRYPT_KEY_B64`, `DISABLE_WIFI` / `DISABLE_BT` (`yes`/`no`), `STACK_DIR` (default `~/docker`).
+`GITHUB_TOKEN`, `GITCRYPT_KEY_B64`, `DISABLE_WIFI` / `DISABLE_BT` (`yes`/`no`), `STACK_REF` (`main` or e.g. `stable-v1`), `STACK_DIR` (default `~/docker`).
+
+## Stable releases
+
+A release is an annotated tag `stable-vN` (numbered in sequence: `stable-v1`, `stable-v2`, …), made in
+**both** repos on commits that were checked on the Pi together. Each tag's message names the other repo's
+commit it pairs with (`git show stable-v1`). Tags never move; question 4/4 lists them, and `main` stays the default.
+
+```bash
+# tag a new release (laptop, in each repo, after the Pi runs this code fine)
+git tag -a stable-v2 -m "stable-v2: <what changed>. Pairs with <other repo> stable-v2 (<sha>)." && git push origin stable-v2
+```
+
+To run a release's own copy of this script too (if bootstrap itself changed since), use the tag in the URL:
+`https://raw.githubusercontent.com/prithivirajasingh5/pi-bootstrap/stable-v1/bootstrap.sh`.
 
 ## Secrets bundle
 

@@ -11,19 +11,20 @@
 #                    bundled deploy key works on GitHub and the git-crypt key matches ~/docker (changes nothing)
 #   -h, --help
 #
-# Flow: sudo setup -> three questions (1/3 GitHub, 2/3 Wi-Fi chip, 3/3 Bluetooth chip) -> the rest
+# Flow: sudo setup -> four questions (1/4 GitHub, 2/4 Wi-Fi chip, 3/4 Bluetooth chip, 4/4 stack version) -> the rest
 # runs unattended. Safe to re-run: every step checks first and skips what is already done.
 # Secrets are only ever typed at hidden prompts; nothing secret is stored by this script
 # except what git-crypt itself keeps in ~/docker/.git/git-crypt/keys/.
 #
-# Question 1/3 normally needs only your bootstrap passphrase: it decrypts secrets.age (made by
+# Question 1/4 normally needs only your bootstrap passphrase: it decrypts secrets.age (made by
 # make-secrets.sh) holding a shared deploy key + the git-crypt key. Fallback: GitHub token + pasted key.
 #
 # Optional non-interactive inputs (avoid on shared machines: env vars can leak via `ps`):
 #   GITHUB_TOKEN       token used once to register the Pi's deploy key
 #   GITCRYPT_KEY_B64   base64 of `git-crypt export-key -` for the docker repo
-#   DISABLE_WIFI       yes/no — answer question 2/3
-#   DISABLE_BT         yes/no — answer question 3/3
+#   DISABLE_WIFI       yes/no — answer question 2/4
+#   DISABLE_BT         yes/no — answer question 3/4
+#   STACK_REF          main or a stable-vN tag of the docker repo — answer question 4/4 (default main)
 #   STACK_DIR          where to clone the repo (default ~/docker)
 # =============================================================================
 set -Eeuo pipefail
@@ -51,7 +52,7 @@ for arg in "$@"; do
     --check-secrets) CHECK_SECRETS=1 ;;
     --no-stack) DO_STACK=0 ;;
     --no-start) DO_START=0 ;;
-    -h|--help) sed -n '2,29p' "$0" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0" 2>/dev/null || true; exit 0 ;;
     *) echo "Unknown option: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -67,7 +68,7 @@ die()  { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 # Report only failures of the main shell, not harmless non-matches inside $(...) subshells.
 trap '[ "$BASH_SUBSHELL" -eq 0 ] && printf "\n\033[1;31mFailed during: %s (line %s)\033[0m\nFix the problem and re-run; completed steps are skipped.\n" "$STEP" "$LINENO" >&2' ERR
 
-# The git-crypt key lives in a temp file between question 1/3 and the unlock step; always shred it.
+# The git-crypt key lives in a temp file between question 1/4 and the unlock step; always shred it.
 KEYFILE=""
 BUNDLE_DIR=""
 cleanup() {
@@ -163,10 +164,10 @@ if [ "$CHECK_SECRETS" -eq 1 ]; then
   exit 0
 fi
 
-printf '\n\033[1mThree questions first; everything after them runs unattended.\033[0m\n'
+printf '\n\033[1mFour questions first; everything after them runs unattended.\033[0m\n'
 
 # =========================================================================================
-ques "Question 1/3  GitHub access and secrets"
+ques "Question 1/4  GitHub access and secrets"
 if [ "$DO_STACK" -eq 0 ]; then
   ok "not needed (--no-stack)"
 else
@@ -272,7 +273,7 @@ else
 fi
 
 # =========================================================================================
-ques "Question 2/3  Wi-Fi chip"
+ques "Question 2/4  Wi-Fi chip"
 if overlay_set disable-wifi; then
   ok "Wi-Fi chip already disabled (dtoverlay=disable-wifi in $CONFIG_TXT)"; WANT_WIFI_OFF=0
 else
@@ -288,12 +289,49 @@ else
 fi
 
 # =========================================================================================
-ques "Question 3/3  Bluetooth chip"
+ques "Question 3/4  Bluetooth chip"
 if overlay_set disable-bt; then
   ok "Bluetooth chip already disabled (dtoverlay=disable-bt in $CONFIG_TXT)"; WANT_BT_OFF=0
 else
   a="${DISABLE_BT:-}"; [ -n "$a" ] || a="$(ask "    Do you want to disable bluetooth chip: [y/N] ")"
   if is_yes "$a"; then WANT_BT_OFF=1; ok "will disable the Bluetooth chip"; else WANT_BT_OFF=0; ok "keeping Bluetooth"; fi
+fi
+
+# =========================================================================================
+# Releases are annotated tags stable-v1, stable-v2, ... on the docker repo; main is the newest code.
+ques "Question 4/4  Docker stack version"
+if [ "$DO_STACK" -eq 0 ]; then
+  ok "not needed (--no-stack)"; STACK_REF=main
+else
+  # One query lists main and every release; "^{}" lines give the commit an annotated tag points to.
+  refs="$(git ls-remote "$REPO_SSH" refs/heads/main 'refs/tags/stable-v*' </dev/null)" \
+    || die "could not list ${REPO_NAME}'s versions on GitHub"
+  main_sha="$(awk '$2 == "refs/heads/main" {print substr($1, 1, 7)}' <<< "$refs")"
+  [ -n "$main_sha" ] || die "${REPO_NAME} has no main branch on GitHub"
+  REF_NAMES=(main); REF_DESC=("latest main ($main_sha)")
+  while read -r sha tag; do
+    REF_NAMES+=("$tag"); REF_DESC+=("$tag ($sha)")
+  done < <(sed -nE 's#^([0-9a-f]{7})[0-9a-f]*\trefs/tags/(stable-v[0-9]+)\^\{\}$#\1 \2#p' <<< "$refs" | sort -k2,2rV)
+  if [ -d "$STACK_DIR/.git" ]; then
+    cur="$(git -C "$STACK_DIR" describe --tags --exact-match HEAD 2>/dev/null || git -C "$STACK_DIR" branch --show-current)"
+    info "this Pi runs: ${cur:-detached} ($(git -C "$STACK_DIR" rev-parse --short HEAD))"
+  fi
+  STACK_REF="${STACK_REF:-}"
+  if [ -n "$STACK_REF" ]; then
+    printf '%s\n' "${REF_NAMES[@]}" | grep -qxF -- "$STACK_REF" \
+      || die "STACK_REF=$STACK_REF is not main or a stable release (have: ${REF_NAMES[*]})"
+  else
+    for i in "${!REF_NAMES[@]}"; do info "  $((i + 1))) ${REF_DESC[$i]}$([ "$i" -eq 0 ] && echo '   <- default')"; done
+    while :; do
+      a="$(ask "    Which version? [1] (number or name) ")"
+      if [ -z "$a" ]; then STACK_REF=main; break
+      elif [[ "$a" =~ ^[0-9]+$ ]] && [ "$a" -ge 1 ] && [ "$a" -le "${#REF_NAMES[@]}" ]; then STACK_REF="${REF_NAMES[$((a - 1))]}"; break
+      elif printf '%s\n' "${REF_NAMES[@]}" | grep -qxF -- "$a"; then STACK_REF="$a"; break
+      fi
+      warn "pick 1-${#REF_NAMES[@]} or a name from the list"
+    done
+  fi
+  ok "will install ${REPO_NAME} $STACK_REF"
 fi
 
 printf '\n\033[1mThat is everything I need. Running unattended from here.\033[0m\n'
@@ -395,38 +433,56 @@ step "Step 6/8  Clone or update ${REPO_NAME}"
 git config --global user.name  >/dev/null || git config --global user.name  "$GIT_NAME"
 git config --global user.email >/dev/null || git config --global user.email "$GIT_EMAIL"
 ok "git identity: $(git config --global user.name) <$(git config --global user.email)>"
+# Switch the checkout to $STACK_REF: main = fast-forward to GitHub's main; stable-vN = that release
+# (detached HEAD, which is normal for a tag). STACK_CHANGED=1 if the code that runs is now different.
+STACK_CHANGED=0
+switch_stack() {
+  local g=(git -C "$STACK_DIR")
+  if [ "$STACK_REF" = main ]; then
+    "${g[@]}" checkout -q main && "${g[@]}" merge -q --ff-only origin/main
+  else
+    "${g[@]}" checkout -q --detach "refs/tags/$STACK_REF"
+  fi
+}
 if [ -d "$STACK_DIR/.git" ]; then
   # Files the running apps rewrite themselves (qBittorrent: listening port, cookies; certbot: renewal
-  # retry date). Changes to only these don't block the update: --autostash sets them aside, fast-forwards,
-  # then puts the Pi's values back. Any other local change still stops the pull, so hand edits are safe.
+  # retry date). Changes to only these don't block the update: they are stashed, the version is
+  # switched, then the Pi's values are put back. Any other local change stops here, so hand edits are safe.
   APP_MANAGED_RE='^(qbittorrent/config/qBittorrent/qBittorrent\.conf|nginx/config/etc/letsencrypt/renewal/[^/]+\.conf)$'
   changed="$(git -C "$STACK_DIR" status --porcelain | cut -c4-)"
   other="$(printf '%s\n' "$changed" | grep -vE "$APP_MANAGED_RE" | grep -v '^$' || true)"
-  if [ -z "$changed" ]; then
-    git -C "$STACK_DIR" pull -q --ff-only && ok "updated $STACK_DIR ($(git -C "$STACK_DIR" log --oneline -1))"
-  elif [ -z "$other" ]; then
-    if git -C "$STACK_DIR" pull -q --ff-only --autostash; then
-      # If GitHub changed the same file, putting the Pi's values back conflicts: git still exits 0 but
-      # leaves conflict markers an app can't read. Take GitHub's version; the Pi's stays in the stash.
-      conflicted="$(git -C "$STACK_DIR" diff --name-only --diff-filter=U)"
-      if [ -n "$conflicted" ]; then
-        git -C "$STACK_DIR" reset -q   # unstage what the conflicted stash apply staged
-        while IFS= read -r f; do git -C "$STACK_DIR" checkout -q -- "$f"; done <<< "$conflicted"
-        ok "updated $STACK_DIR ($(git -C "$STACK_DIR" log --oneline -1))"
-        warn "GitHub also changed these, so its version was kept (the Pi's is in 'git stash list'):"
-        printf '%s\n' "$conflicted" | sed 's/^/        /'
-      else
-        ok "updated $STACK_DIR ($(git -C "$STACK_DIR" log --oneline -1)), kept the apps' own config changes"
-      fi
-    else
-      warn "$STACK_DIR: pull failed; the apps' config changes are safe (see git status / git stash list)"
-    fi
-  else
-    warn "$STACK_DIR has local changes; not pulling (commit or stash them, then re-run):"
+  if [ -n "$other" ]; then
+    warn "$STACK_DIR has local changes; not updating (commit or stash them, then re-run):"
     printf '%s\n' "$other" | sed 's/^/        /'
+  else
+    before="$(git -C "$STACK_DIR" rev-parse HEAD)"
+    git -C "$STACK_DIR" fetch -q --tags origin </dev/null
+    stashed=0
+    if [ -n "$changed" ]; then git -C "$STACK_DIR" stash push -q -m "pi-bootstrap: apps' own config"; stashed=1; fi
+    switched=1; switch_stack || switched=0
+    if [ "$stashed" -eq 1 ] && ! git -C "$STACK_DIR" stash pop -q 2>/dev/null; then
+      # GitHub changed the same file: keep its version (no conflict markers for the app to choke on);
+      # git keeps the Pi's version in the stash when a pop conflicts.
+      conflicted="$(git -C "$STACK_DIR" diff --name-only --diff-filter=U)"
+      git -C "$STACK_DIR" reset -q
+      while IFS= read -r f; do [ -n "$f" ] && git -C "$STACK_DIR" checkout -q -- "$f"; done <<< "$conflicted"
+      warn "GitHub also changed these, so its version was kept (the Pi's is in 'git stash list'):"
+      printf '%s\n' "$conflicted" | sed 's/^/        /'
+    fi
+    [ "$(git -C "$STACK_DIR" rev-parse HEAD)" = "$before" ] || STACK_CHANGED=1
+    if [ "$switched" -eq 0 ]; then
+      warn "could not switch $STACK_DIR to $STACK_REF (local commits on main?); left at $(git -C "$STACK_DIR" log --oneline -1)"
+    elif [ "$STACK_CHANGED" -eq 1 ]; then
+      ok "updated $STACK_DIR to $STACK_REF ($(git -C "$STACK_DIR" log --oneline -1))"
+    else
+      ok "$STACK_DIR already at $STACK_REF ($(git -C "$STACK_DIR" log --oneline -1))"
+    fi
+    if [ "$stashed" -eq 1 ] && [ -z "${conflicted:-}" ]; then ok "kept the apps' own config changes"; fi
   fi
 else
-  git clone -q "$REPO_SSH" "$STACK_DIR"; ok "cloned into $STACK_DIR ($(git -C "$STACK_DIR" log --oneline -1))"
+  git clone -q "$REPO_SSH" "$STACK_DIR" </dev/null
+  [ "$STACK_REF" = main ] || git -C "$STACK_DIR" checkout -q --detach "refs/tags/$STACK_REF"
+  ok "cloned into $STACK_DIR at $STACK_REF ($(git -C "$STACK_DIR" log --oneline -1))"
 fi
 
 # =========================================================================================
@@ -434,7 +490,7 @@ step "Step 7/8  Unlock secrets (git-crypt)"
 if ! is_locked; then
   ok "already unlocked"
 else
-  [ -n "$KEYFILE" ] && [ -s "$KEYFILE" ] || die "repo is encrypted but no git-crypt key was given (re-run and paste it at question 1/3)"
+  [ -n "$KEYFILE" ] && [ -s "$KEYFILE" ] || die "repo is encrypted but no git-crypt key was given (re-run and paste it at question 1/4)"
   (cd "$STACK_DIR" && git-crypt unlock "$KEYFILE") || die "git-crypt unlock failed (wrong key?)"
   is_locked && die "files still encrypted after unlock"
   ok "unlocked (.env readable; key kept only in $STACK_DIR/.git/git-crypt/keys/)"
@@ -448,8 +504,11 @@ if [ "$DO_START" -eq 0 ]; then
 else
   # sudo: the docker group membership from step 3 only applies after re-login.
   # Recreate existing containers if the log settings just changed (they are fixed at creation).
-  recreate=(); [ "$DOCKER_LOGCFG_CHANGED" -eq 1 ] && recreate=(--force-recreate)
-  (cd "$STACK_DIR" && sudo docker compose up -d "${recreate[@]}") 2>&1 | { grep -vE ' (Pulling|Waiting|Downloading|Extracting|Verifying|Pull complete|Download complete|Already exists)' || true; } | tail -15
+  # Also when the stack version changed: scripts are bind-mounted, so running containers would keep the
+  # old code. --build rebuilds the local images (python-jobs, printmail) from the checked-out Dockerfile
+  # (cached, so quick when nothing changed).
+  recreate=(); if [ "$DOCKER_LOGCFG_CHANGED" -eq 1 ] || [ "$STACK_CHANGED" -eq 1 ]; then recreate=(--force-recreate); fi
+  (cd "$STACK_DIR" && sudo docker compose up -d --build "${recreate[@]}") 2>&1 | { grep -vE ' (Pulling|Waiting|Downloading|Extracting|Verifying|Pull complete|Download complete|Already exists)' || true; } | tail -15
   info "waiting for health checks (up to 10 min; nginx may renew its certificate first)..."
   for _ in $(seq 1 60); do
     st="$(sudo docker compose -f "$STACK_DIR/docker-compose.yml" ps --format '{{.Status}}')"
