@@ -54,7 +54,7 @@ and heat; the trade-off is losing Wi-Fi as a backup link if Ethernet fails.
 | 3/8 | Adds `pi` to the `docker` group; caps container logs (`/etc/docker/daemon.json`: 10 MB × 3 per container); makes zsh the login shell, installs [`zshrc`](zshrc) as `~/.zshrc` (existing one backed up), which puts the stack's custom scripts (`~/docker/python-jobs/jobs`: `messenger`, `ren`, `run`, …) on PATH |
 | 4/8 | Creates `~/movies`, `~/movies_archive`, `~/Downloads` (paths used by the stack's `.env`) |
 | 5/8 | Applies the Wi-Fi / Bluetooth choices to `config.txt` (reboot needed; the script tells you) |
-| 6/8 | Git identity; clones `docker` to `~/docker`, or fast-forwards it if it exists and has no local changes |
+| 6/8 | Git identity; clones `docker` to `~/docker`, or fast-forwards it if it exists and has no local changes. Changes the apps make to their own config (`qBittorrent.conf`, certbot's `renewal/*.conf`) don't count: those are set aside, the repo is updated, and the Pi's values are put back (`--autostash`) |
 | 7/8 | Unlocks it with the git-crypt key from question 1/3 (temp key file shredded afterwards) — skipped if already unlocked |
 | 8/8 | `docker compose up -d` (builds the local images `python-jobs` and `printmail`, the email-to-print service with its own CUPS: nothing printing-related is installed on the Pi itself), waits for health checks, prints the status table; enables the **container-watchdog** timer (Telegram alerts via `messenger` for crash loops / unhealthy or stopped containers / full disk, auto-stops runaway crash loops) |
 

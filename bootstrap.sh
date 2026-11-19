@@ -396,10 +396,34 @@ git config --global user.name  >/dev/null || git config --global user.name  "$GI
 git config --global user.email >/dev/null || git config --global user.email "$GIT_EMAIL"
 ok "git identity: $(git config --global user.name) <$(git config --global user.email)>"
 if [ -d "$STACK_DIR/.git" ]; then
-  if [ -z "$(git -C "$STACK_DIR" status --porcelain)" ]; then
+  # Files the running apps rewrite themselves (qBittorrent: listening port, cookies; certbot: renewal
+  # retry date). Changes to only these don't block the update: --autostash sets them aside, fast-forwards,
+  # then puts the Pi's values back. Any other local change still stops the pull, so hand edits are safe.
+  APP_MANAGED_RE='^(qbittorrent/config/qBittorrent/qBittorrent\.conf|nginx/config/etc/letsencrypt/renewal/[^/]+\.conf)$'
+  changed="$(git -C "$STACK_DIR" status --porcelain | cut -c4-)"
+  other="$(printf '%s\n' "$changed" | grep -vE "$APP_MANAGED_RE" | grep -v '^$' || true)"
+  if [ -z "$changed" ]; then
     git -C "$STACK_DIR" pull -q --ff-only && ok "updated $STACK_DIR ($(git -C "$STACK_DIR" log --oneline -1))"
+  elif [ -z "$other" ]; then
+    if git -C "$STACK_DIR" pull -q --ff-only --autostash; then
+      # If GitHub changed the same file, putting the Pi's values back conflicts: git still exits 0 but
+      # leaves conflict markers an app can't read. Take GitHub's version; the Pi's stays in the stash.
+      conflicted="$(git -C "$STACK_DIR" diff --name-only --diff-filter=U)"
+      if [ -n "$conflicted" ]; then
+        git -C "$STACK_DIR" reset -q   # unstage what the conflicted stash apply staged
+        while IFS= read -r f; do git -C "$STACK_DIR" checkout -q -- "$f"; done <<< "$conflicted"
+        ok "updated $STACK_DIR ($(git -C "$STACK_DIR" log --oneline -1))"
+        warn "GitHub also changed these, so its version was kept (the Pi's is in 'git stash list'):"
+        printf '%s\n' "$conflicted" | sed 's/^/        /'
+      else
+        ok "updated $STACK_DIR ($(git -C "$STACK_DIR" log --oneline -1)), kept the apps' own config changes"
+      fi
+    else
+      warn "$STACK_DIR: pull failed; the apps' config changes are safe (see git status / git stash list)"
+    fi
   else
-    warn "$STACK_DIR has local changes; not pulling (commit or stash them, then re-run)"
+    warn "$STACK_DIR has local changes; not pulling (commit or stash them, then re-run):"
+    printf '%s\n' "$other" | sed 's/^/        /'
   fi
 else
   git clone -q "$REPO_SSH" "$STACK_DIR"; ok "cloned into $STACK_DIR ($(git -C "$STACK_DIR" log --oneline -1))"
