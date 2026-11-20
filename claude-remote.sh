@@ -14,6 +14,8 @@
 #      "Enable Remote Control?" and "Trust this folder?" first-run questions for it
 #   4. installs claude-remote.service: `claude remote-control` as this user, started at boot,
 #      restarted if it stops. The Pi then shows up in the Claude app -> Code tab.
+#   5. installs claude-signin.service (claude-signin.py): when the sign-in is about to end it sends
+#      you a sign-in link on Telegram (messenger); reply to the bot with `claude <code>` to renew.
 #
 # Claude runs as this user, who has passwordless sudo: it can do anything on the Pi you approve.
 #
@@ -29,6 +31,17 @@ PERMISSION_MODE="${CLAUDE_PERMISSION_MODE:-auto}"
 RC_NAME="${CLAUDE_RC_NAME:-$(hostname)}"
 CLAUDE="$HOME/.local/bin/claude"
 UNIT=claude-remote.service
+SIGNIN_UNIT=claude-signin.service
+SIGNIN_BIN=/usr/local/bin/claude-signin
+BOOTSTRAP_RAW="https://raw.githubusercontent.com/prithivirajasingh5/pi-bootstrap/main"
+# Companion files: from PI_BOOTSTRAP_DIR (bootstrap.sh run from a clone), next to this script, or GitHub.
+SRC_DIR="${PI_BOOTSTRAP_DIR:-}"
+if [ -z "$SRC_DIR" ] && [ -f "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/claude-signin.py" ]; then
+  SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+fetch() {  # fetch <name> <dest>
+  if [ -n "$SRC_DIR" ]; then cp "$SRC_DIR/$1" "$2"; else curl -fsSL "$BOOTSTRAP_RAW/$1" -o "$2"; fi
+}
 SIGNED_IN_NOW=0
 
 STEP=""
@@ -50,7 +63,7 @@ sudo -n true 2>/dev/null || die "$USER needs passwordless sudo (bootstrap.sh ste
 ok "user=$USER  workdir=$WORKDIR  permission mode=$PERMISSION_MODE"
 
 # =========================================================================================
-step "1/4  Install Claude Code"
+step "1/5  Install Claude Code"
 if [ -x "$CLAUDE" ]; then
   ok "already installed: $("$CLAUDE" --version) (it updates itself)"
 else
@@ -60,7 +73,7 @@ else
 fi
 
 # =========================================================================================
-step "2/4  Sign in to claude.ai"
+step "2/5  Sign in to claude.ai"
 if logged_in; then
   ok "already signed in"
 else
@@ -71,7 +84,7 @@ else
 fi
 
 # =========================================================================================
-step "3/4  Workspace and first-run questions"
+step "3/5  Workspace and first-run questions"
 mkdir -p "$WORKDIR"; ok "workspace $WORKDIR"
 # The service has no terminal, so `claude remote-control` would exit with "Workspace not trusted".
 # Claude Code only accepts that answer from a person (a scripted "y" is rejected as too fast), so
@@ -100,7 +113,7 @@ else
 fi
 
 # =========================================================================================
-step "4/4  systemd service ($UNIT)"
+step "4/5  systemd service ($UNIT)"
 unit_text="[Unit]
 Description=Claude Code Remote Control (reach this Pi from the Claude app)
 Wants=network-online.target
@@ -140,7 +153,40 @@ else
   die "$UNIT is not running (log above)"
 fi
 
+# =========================================================================================
+step "5/5  Sign-in renewal over Telegram ($SIGNIN_UNIT)"
+new_bin="$(mktemp)"; fetch claude-signin.py "$new_bin"
+signin_unit="[Unit]
+Description=Renew Claude Code's sign-in via Telegram (link out by messenger, code back via the bot)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=$USER
+Environment=HOME=$HOME
+ExecStart=/usr/bin/python3 $SIGNIN_BIN
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target"
+changed=0
+if ! cmp -s "$new_bin" "$SIGNIN_BIN"; then sudo install -m 0755 "$new_bin" "$SIGNIN_BIN"; changed=1; fi
+rm -f "$new_bin"
+if [ "$(cat "/etc/systemd/system/$SIGNIN_UNIT" 2>/dev/null)" != "$signin_unit" ]; then
+  printf '%s\n' "$signin_unit" | sudo tee "/etc/systemd/system/$SIGNIN_UNIT" >/dev/null
+  sudo systemctl daemon-reload; changed=1
+fi
+sudo systemctl enable "$SIGNIN_UNIT" >/dev/null 2>&1
+if [ "$changed" -eq 1 ] || ! systemctl is-active --quiet "$SIGNIN_UNIT"; then sudo systemctl restart "$SIGNIN_UNIT"; fi
+sleep 3
+systemctl is-active --quiet "$SIGNIN_UNIT" || { sudo journalctl -u "$SIGNIN_UNIT" -n 20 --no-pager -o cat; die "$SIGNIN_UNIT is not running"; }
+ok "running: $(sudo journalctl -u "$SIGNIN_UNIT" -n 1 --no-pager -o cat)"
+[ -x "$HOME/docker/python-jobs/jobs/messenger" ] || warn "messenger not found yet (it comes with the docker stack); links can't be sent until it is there"
+
 step "Done"
 info "Phone: Claude app -> Code tab -> pick \"$RC_NAME\"."
 info "Logs: journalctl -u $UNIT -f     Restart: sudo systemctl restart $UNIT"
-info "Sign-ins expire eventually; when the Pi disappears from the app, re-run this script."
+info "Sign-in renewal: a Telegram link arrives ~5 days before it ends; reply to the bot: claude <code>"
+info "Telegram bot: claude (status) | claude login (new link now) | claude <code>"

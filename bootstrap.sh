@@ -350,7 +350,7 @@ else
 fi
 if is_yes "$a"; then
   rc_script="$(mktemp)"; fetch claude-remote.sh "$rc_script"
-  bash "$rc_script"; rm -f "$rc_script"
+  PI_BOOTSTRAP_DIR="$SCRIPT_DIR" bash "$rc_script"; rm -f "$rc_script"
 else
   ok "skipping Claude Code"
 fi
