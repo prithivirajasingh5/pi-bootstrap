@@ -7,16 +7,19 @@
 # Run as your normal user (pi) in an interactive SSH session. bootstrap.sh runs it too (question 5/5).
 # Safe to re-run: every step checks first and skips what is already done.
 #
-#   1. installs Claude Code (Anthropic's native installer -> ~/.local/bin/claude, auto-updates itself)
+#   1. installs Claude Code (Anthropic's native installer -> ~/.local/bin/claude)
 #   2. signs in to your claude.ai account (once: open the printed URL, approve, paste the code back).
 #      Remote Control needs a real claude.ai login; a `claude setup-token` token can't open it.
-#   3. creates the workspace folder sessions start in (default ~/claude), installs its CLAUDE.md
-#      (opi-CLAUDE.md: house rules for every session), and accepts the
-#      "Enable Remote Control?" and "Trust this folder?" first-run questions for it
-#   4. installs claude-remote.service: `claude remote-control` as this user, started at boot,
-#      restarted if it stops. The Pi then shows up in the Claude app -> Code tab.
-#   5. installs claude-signin.service (claude-signin.py): when the sign-in is about to end it sends
-#      you a sign-in link on Telegram (messenger); reply to the bot with `claude <code>` to renew.
+#   3. GitHub: installs gh, signs it in (device code you approve on the phone), lets git use it, and
+#      clones pi-bootstrap into ~/claude so setup changes can be made and pushed from the Pi
+#   4. workspace (~/claude): CLAUDE.md (house rules, from opi-CLAUDE.md), /new-project and /git-check,
+#      the session-start sync check, your GPG public key for git-crypt, and the one-time
+#      "Trust this folder?" answer
+#   5. claude-remote.service: `claude remote-control` as this user, started at boot, restarted if it
+#      stops, its repeated status lines filtered by log-dedupe. The Pi shows up in the Claude app.
+#   6. claude-signin.service (claude-signin.py): when the sign-in is about to end it sends you a
+#      sign-in link on Telegram (messenger); reply to the bot with `claude <code>` to renew.
+#   7. claude-update.timer: updates Claude Code on Sundays (claude-weekly-update.sh)
 #
 # Claude runs as this user, who has passwordless sudo: it can do anything on the Pi you approve.
 #
@@ -53,6 +56,13 @@ warn() { printf '    \033[1;33m! %s\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 trap 'printf "\n\033[1;31mFailed during: %s (line %s)\033[0m\nFix the problem and re-run; completed steps are skipped.\n" "$STEP" "$LINENO" >&2' ERR
 
+# put <repo file> <destination> <mode> [sudo]: install if different; returns 0 if it changed.
+put() {
+  local tmp; tmp="$(mktemp)"; fetch "$1" "$tmp"
+  if cmp -s "$tmp" "$2"; then rm -f "$tmp"; return 1; fi
+  ${4:+sudo} install -D -m "$3" "$tmp" "$2"; rm -f "$tmp"; return 0
+}
+
 logged_in() { "$CLAUDE" auth status >/dev/null 2>&1; }
 
 step "Preflight"
@@ -64,7 +74,7 @@ sudo -n true 2>/dev/null || die "$USER needs passwordless sudo (bootstrap.sh ste
 ok "user=$USER  workdir=$WORKDIR  permission mode=$PERMISSION_MODE"
 
 # =========================================================================================
-step "1/5  Install Claude Code"
+step "1/7  Install Claude Code"
 if [ -x "$CLAUDE" ]; then
   ok "already installed: $("$CLAUDE" --version) (it updates itself)"
 else
@@ -74,7 +84,7 @@ else
 fi
 
 # =========================================================================================
-step "2/5  Sign in to claude.ai"
+step "2/7  Sign in to claude.ai"
 if logged_in; then
   ok "already signed in"
 else
@@ -85,7 +95,28 @@ else
 fi
 
 # =========================================================================================
-step "3/5  Workspace and first-run questions"
+step "3/7  GitHub (gh CLI: push to all your repos, create repos, releases)"
+if ! command -v gh >/dev/null; then
+  sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -qq gh >/dev/null; ok "installed gh"
+fi
+if gh auth status >/dev/null 2>&1; then
+  ok "gh signed in as $(gh api user --jq .login 2>/dev/null)"
+else
+  info "Open https://github.com/login/device on your phone and enter the code shown below."
+  gh auth login --hostname github.com --git-protocol https --web --scopes workflow </dev/tty >/dev/tty 2>&1
+  gh auth status >/dev/null 2>&1 || die "gh is not signed in; re-run to try again"
+  ok "gh signed in as $(gh api user --jq .login)"
+fi
+gh auth setup-git; ok "git uses gh for https://github.com (the docker repo keeps its SSH deploy key)"
+if [ -d "$WORKDIR/pi-bootstrap/.git" ]; then
+  ok "$WORKDIR/pi-bootstrap present (setup changes are made and pushed there)"
+else
+  mkdir -p "$WORKDIR"; git clone -q https://github.com/prithivirajasingh5/pi-bootstrap.git "$WORKDIR/pi-bootstrap" </dev/null
+  ok "cloned pi-bootstrap into $WORKDIR/pi-bootstrap"
+fi
+
+# =========================================================================================
+step "4/7  Workspace and first-run questions"
 mkdir -p "$WORKDIR"; ok "workspace $WORKDIR"
 # House rules every session reads (opi-CLAUDE.md in this repo). Edits made on the Pi are kept as a backup.
 new_md="$(mktemp)"; fetch opi-CLAUDE.md "$new_md"
@@ -98,6 +129,33 @@ else
   install -m 0644 "$new_md" "$WORKDIR/CLAUDE.md"; ok "installed $WORKDIR/CLAUDE.md (house rules for sessions)"
 fi
 rm -f "$new_md"
+# The laptop's Claude setup, ported: /new-project and /git-check, and the session-start sync check.
+for c in git-check new-project; do
+  put "opi-claude/commands/$c.md" "$WORKDIR/.claude/commands/$c.md" 0644 && ok "installed /$c"
+done
+put opi-claude/hooks/sync-check.sh "$HOME/.claude/hooks/sync-check.sh" 0755 && ok "installed the sync-check hook"
+python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+try: d = json.load(open(path))
+except (OSError, ValueError): d = {}
+hook = {"matcher": "startup", "hooks": [{"type": "command", "command": "$HOME/.claude/hooks/sync-check.sh",
+        "timeout": 60, "statusMessage": "Checking repo sync state\u2026"}]}
+starts = d.setdefault("hooks", {}).setdefault("SessionStart", [])
+if not any("sync-check.sh" in h.get("command", "") for e in starts for h in e.get("hooks", [])):
+    starts.append(hook)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    json.dump(d, open(path, "w"), indent=2)
+    print("    \u2713 session-start sync check enabled in", path)
+PY
+# git-crypt for new projects: the owner's PUBLIC key only (the private key never comes here).
+gpg_key=36495943FBDA0DF535B6FBA2E9A09FE2F41B0BFC
+if gpg --list-keys "$gpg_key" >/dev/null 2>&1; then
+  ok "GPG public key $gpg_key present"
+else
+  key_tmp="$(mktemp)"; fetch opi-claude/gpg-public.asc "$key_tmp"; gpg --quiet --import "$key_tmp" 2>/dev/null; rm -f "$key_tmp"
+  gpg --list-keys "$gpg_key" >/dev/null 2>&1 && ok "imported GPG public key $gpg_key (new projects are encrypted to it)"
+fi
 # The service has no terminal, so `claude remote-control` would exit with "Workspace not trusted".
 # Claude Code only accepts that answer from a person (a scripted "y" is rejected as too fast), so
 # the first time we run it in the foreground once and you answer the question yourself.
@@ -125,7 +183,8 @@ else
 fi
 
 # =========================================================================================
-step "4/5  systemd service ($UNIT)"
+step "5/7  systemd service ($UNIT)"
+put log-dedupe.py /usr/local/bin/log-dedupe 0755 sudo && ok "installed log-dedupe"
 unit_text="[Unit]
 Description=Claude Code Remote Control (reach this Pi from the Claude app)
 Wants=network-online.target
@@ -137,7 +196,8 @@ User=$USER
 WorkingDirectory=$WORKDIR
 Environment=HOME=$HOME
 Environment=PATH=$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=$CLAUDE remote-control --remote-control-session-name-prefix $RC_NAME --permission-mode $PERMISSION_MODE
+# The status panel is redrawn every few seconds; log-dedupe keeps those repeats out of the journal.
+ExecStart=/bin/bash -c 'set -o pipefail; $CLAUDE remote-control --remote-control-session-name-prefix $RC_NAME --permission-mode $PERMISSION_MODE 2>&1 | /usr/local/bin/log-dedupe'
 Restart=always
 RestartSec=30
 
@@ -166,7 +226,7 @@ else
 fi
 
 # =========================================================================================
-step "5/5  Sign-in renewal over Telegram ($SIGNIN_UNIT)"
+step "6/7  Sign-in renewal over Telegram ($SIGNIN_UNIT)"
 new_bin="$(mktemp)"; fetch claude-signin.py "$new_bin"
 signin_unit="[Unit]
 Description=Renew Claude Code's sign-in via Telegram (link out by messenger, code back via the bot)
@@ -196,6 +256,36 @@ sleep 3
 systemctl is-active --quiet "$SIGNIN_UNIT" || { sudo journalctl -u "$SIGNIN_UNIT" -n 20 --no-pager -o cat; die "$SIGNIN_UNIT is not running"; }
 ok "running: $(sudo journalctl -u "$SIGNIN_UNIT" -n 1 --no-pager -o cat)"
 [ -x "$HOME/claude/docker/python-jobs/jobs/messenger" ] || warn "messenger not found yet (it comes with the docker stack); links can't be sent until it is there"
+
+# =========================================================================================
+step "7/7  Weekly Claude Code update (claude-update.timer, Sundays 04:30)"
+put claude-weekly-update.sh /usr/local/bin/claude-weekly-update 0755 sudo && ok "installed claude-weekly-update"
+upd_service="[Unit]
+Description=Update Claude Code and restart Remote Control if a new version came
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=$USER
+Environment=HOME=$HOME
+ExecStart=/usr/local/bin/claude-weekly-update"
+upd_timer="[Unit]
+Description=Weekly Claude Code update
+
+[Timer]
+OnCalendar=Sun 04:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+if [ "$(cat /etc/systemd/system/claude-update.service 2>/dev/null)" != "$upd_service" ] || [ "$(cat /etc/systemd/system/claude-update.timer 2>/dev/null)" != "$upd_timer" ]; then
+  printf '%s\n' "$upd_service" | sudo tee /etc/systemd/system/claude-update.service >/dev/null
+  printf '%s\n' "$upd_timer" | sudo tee /etc/systemd/system/claude-update.timer >/dev/null
+  sudo systemctl daemon-reload
+fi
+sudo systemctl enable --now claude-update.timer >/dev/null 2>&1
+ok "next run: $(systemctl show claude-update.timer -p NextElapseUSecRealtime --value)"
 
 step "Done"
 info "Phone: Claude app -> Code tab -> pick \"$RC_NAME\"."
