@@ -32,13 +32,23 @@ the Pi is installed (packages, services, timers, this file) belong there: change
 relevant script here to test (`bash ~/claude/pi-bootstrap/claude-remote.sh`, or `bootstrap.sh`), then
 commit and push. Don't hand-edit system setup that pi-bootstrap would overwrite.
 
+**Interrupt rule: everything you install or set up here goes into pi-bootstrap, in the same task.**
+A fresh Pi must end up identical by running pi-bootstrap alone. So whenever you install a package
+(`apt`, `pip`, `npm`, a binary), add a systemd service or timer, or change system config (`/etc/...`,
+network, sudoers, journald, Docker daemon), stop before calling the task done and:
+1. add it to pi-bootstrap: the `PACKAGES` list in `bootstrap.sh`, or a check-first step in
+   `bootstrap.sh` / `claude-remote.sh` (re-runnable: skip when already done), with a comment saying why
+2. re-run that script here to prove it is idempotent
+3. commit and push pi-bootstrap, and mention it in your reply
+One-off debugging tools you remove afterwards are the only exception; say so if you skip this.
+
 ## Projects and GitHub
 - `gh` is signed in as me (all repos, create repos, releases); git uses it for `https://github.com/...`.
   The docker repo uses its own SSH deploy key.
 - Projects live in `~/claude/<name>`, like on the laptop. New ones: `/new-project` (private repo,
   git-crypt encrypted to my GPG public key). Sync state: `/git-check`; each session starts with it.
-- My other repos are encrypted with my GPG key, which is **not** on this Pi: they clone, but their
-  encrypted files stay locked here. Tell me if a task needs them unlocked.
+- My GPG key is on this Pi (same as the laptop), so every repo unlocks: clone, then `git-crypt unlock`.
+  It has no passphrase: never export, print or copy it anywhere.
 
 ## Health
 - Every Sunday `health-report` sends a diagnosis to Telegram; reports are in `~/.local/state/health-report/`.

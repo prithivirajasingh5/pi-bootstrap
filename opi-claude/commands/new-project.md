@@ -20,8 +20,9 @@ Only after the name passes validation, ask these one by one:
 Wait for all answers before proceeding.
 
 ## Step 2 — Check the tools (this Pi has no btrfs snapshots; git and GitHub are the safety net)
-`gh` must be signed in, and git-crypt needs the owner's GPG **public** key (installed by pi-bootstrap
-from `opi-claude/gpg-public.asc`; the private key is not on this Pi, so only the laptop can unlock).
+`gh` must be signed in, and git-crypt needs the owner's GPG key (the secret key comes from
+pi-bootstrap's secrets bundle, question 1/5; the public key alone from `opi-claude/gpg-public.asc` is
+enough to create a project, but not to unlock it after a fresh clone).
 
 !gh auth status
 !gpg --list-keys 36495943FBDA0DF535B6FBA2E9A09FE2F41B0BFC

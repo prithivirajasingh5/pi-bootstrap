@@ -118,16 +118,19 @@ fi
 # =========================================================================================
 step "4/7  Workspace and first-run questions"
 mkdir -p "$WORKDIR"; ok "workspace $WORKDIR"
-# House rules every session reads (opi-CLAUDE.md in this repo). Edits made on the Pi are kept as a backup.
+# House rules every session reads (opi-CLAUDE.md in this repo). A copy of what was last installed is
+# kept, so a .bak is made only when the file was edited here (not after every update of the rules).
 new_md="$(mktemp)"; fetch opi-CLAUDE.md "$new_md"
+last_md="$HOME/.local/state/pi-bootstrap/CLAUDE.md.installed"
 if [ -f "$WORKDIR/CLAUDE.md" ] && cmp -s "$new_md" "$WORKDIR/CLAUDE.md"; then
   ok "$WORKDIR/CLAUDE.md up to date"
 else
-  if [ -f "$WORKDIR/CLAUDE.md" ]; then
-    bak="$WORKDIR/CLAUDE.md.bak.$(date +%Y%m%d-%H%M%S)"; cp -p "$WORKDIR/CLAUDE.md" "$bak"; info "backed up the old one to $bak"
+  if [ -f "$WORKDIR/CLAUDE.md" ] && ! cmp -s "$WORKDIR/CLAUDE.md" "$last_md"; then
+    bak="$WORKDIR/CLAUDE.md.bak.$(date +%Y%m%d-%H%M%S)"; cp -p "$WORKDIR/CLAUDE.md" "$bak"; info "it was edited here: kept that version as $bak"
   fi
   install -m 0644 "$new_md" "$WORKDIR/CLAUDE.md"; ok "installed $WORKDIR/CLAUDE.md (house rules for sessions)"
 fi
+install -D -m 0644 "$new_md" "$last_md"
 rm -f "$new_md"
 # The laptop's Claude setup, ported: /new-project and /git-check, and the session-start sync check.
 for c in git-check new-project; do
