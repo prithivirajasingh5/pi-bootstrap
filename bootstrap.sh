@@ -11,20 +11,23 @@
 #                    bundled deploy key works on GitHub and the git-crypt key matches ~/docker (changes nothing)
 #   -h, --help
 #
-# Flow: sudo setup -> four questions (1/4 GitHub, 2/4 Wi-Fi chip, 3/4 Bluetooth chip, 4/4 stack version) -> the rest
+# Flow: sudo setup -> five questions (1/5 GitHub, 2/5 Wi-Fi chip, 3/5 Bluetooth chip, 4/5 stack version,
+#       5/5 Claude Code) -> the rest
 # runs unattended. Safe to re-run: every step checks first and skips what is already done.
 # Secrets are only ever typed at hidden prompts; nothing secret is stored by this script
 # except what git-crypt itself keeps in ~/docker/.git/git-crypt/keys/.
 #
-# Question 1/4 normally needs only your bootstrap passphrase: it decrypts secrets.age (made by
+# Question 1/5 normally needs only your bootstrap passphrase: it decrypts secrets.age (made by
 # make-secrets.sh) holding a shared deploy key + the git-crypt key. Fallback: GitHub token + pasted key.
 #
 # Optional non-interactive inputs (avoid on shared machines: env vars can leak via `ps`):
 #   GITHUB_TOKEN       token used once to register the Pi's deploy key
 #   GITCRYPT_KEY_B64   base64 of `git-crypt export-key -` for the docker repo
-#   DISABLE_WIFI       yes/no — answer question 2/4
-#   DISABLE_BT         yes/no — answer question 3/4
-#   STACK_REF          main or a stable-vN tag of the docker repo — answer question 4/4 (default main)
+#   DISABLE_WIFI       yes/no — answer question 2/5
+#   DISABLE_BT         yes/no — answer question 3/5
+#   STACK_REF          main or a stable-vN tag of the docker repo — answer question 4/5 (default main)
+#   CLAUDE_REMOTE      yes/no — answer question 5/5 (claude-remote.sh also reads CLAUDE_WORKDIR,
+#                      CLAUDE_PERMISSION_MODE, CLAUDE_RC_NAME)
 #   STACK_DIR          where to clone the repo (default ~/docker)
 # =============================================================================
 set -Eeuo pipefail
@@ -52,7 +55,7 @@ for arg in "$@"; do
     --check-secrets) CHECK_SECRETS=1 ;;
     --no-stack) DO_STACK=0 ;;
     --no-start) DO_START=0 ;;
-    -h|--help) sed -n '2,30p' "$0" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0" 2>/dev/null || true; exit 0 ;;
     *) echo "Unknown option: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -68,7 +71,7 @@ die()  { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 # Report only failures of the main shell, not harmless non-matches inside $(...) subshells.
 trap '[ "$BASH_SUBSHELL" -eq 0 ] && printf "\n\033[1;31mFailed during: %s (line %s)\033[0m\nFix the problem and re-run; completed steps are skipped.\n" "$STEP" "$LINENO" >&2' ERR
 
-# The git-crypt key lives in a temp file between question 1/4 and the unlock step; always shred it.
+# The git-crypt key lives in a temp file between question 1/5 and the unlock step; always shred it.
 KEYFILE=""
 BUNDLE_DIR=""
 cleanup() {
@@ -164,10 +167,10 @@ if [ "$CHECK_SECRETS" -eq 1 ]; then
   exit 0
 fi
 
-printf '\n\033[1mFour questions first; everything after them runs unattended.\033[0m\n'
+printf '\n\033[1mFive questions first; everything after them runs unattended.\033[0m\n'
 
 # =========================================================================================
-ques "Question 1/4  GitHub access and secrets"
+ques "Question 1/5  GitHub access and secrets"
 if [ "$DO_STACK" -eq 0 ]; then
   ok "not needed (--no-stack)"
 else
@@ -273,7 +276,7 @@ else
 fi
 
 # =========================================================================================
-ques "Question 2/4  Wi-Fi chip"
+ques "Question 2/5  Wi-Fi chip"
 if overlay_set disable-wifi; then
   ok "Wi-Fi chip already disabled (dtoverlay=disable-wifi in $CONFIG_TXT)"; WANT_WIFI_OFF=0
 else
@@ -289,7 +292,7 @@ else
 fi
 
 # =========================================================================================
-ques "Question 3/4  Bluetooth chip"
+ques "Question 3/5  Bluetooth chip"
 if overlay_set disable-bt; then
   ok "Bluetooth chip already disabled (dtoverlay=disable-bt in $CONFIG_TXT)"; WANT_BT_OFF=0
 else
@@ -299,7 +302,7 @@ fi
 
 # =========================================================================================
 # Releases are annotated tags stable-v1, stable-v2, ... on the docker repo; main is the newest code.
-ques "Question 4/4  Docker stack version"
+ques "Question 4/5  Docker stack version"
 if [ "$DO_STACK" -eq 0 ]; then
   ok "not needed (--no-stack)"; STACK_REF=main
 else
@@ -332,6 +335,24 @@ else
     done
   fi
   ok "will install ${REPO_NAME} $STACK_REF"
+fi
+
+# =========================================================================================
+# Claude Code + Remote Control (claude-remote.sh): needs you for the claude.ai sign-in and the
+# one-time "Trust ~/claude?" answer, so it runs here, before the unattended part. Independent of
+# the Docker stack, so --no-stack still offers it.
+ques "Question 5/5  Claude Code Remote Control (use this Pi from the Claude mobile app)"
+if systemctl is-enabled --quiet claude-remote.service 2>/dev/null; then
+  a=yes; ok "already set up; re-checking it (asks for a sign-in only if the old one expired)"
+else
+  a="${CLAUDE_REMOTE:-}"; [ -n "$a" ] || a="$(ask "    Set up Claude Code with Remote Control? [Y/n] ")"
+  [ -n "$a" ] || a=yes
+fi
+if is_yes "$a"; then
+  rc_script="$(mktemp)"; fetch claude-remote.sh "$rc_script"
+  bash "$rc_script"; rm -f "$rc_script"
+else
+  ok "skipping Claude Code"
 fi
 
 printf '\n\033[1mThat is everything I need. Running unattended from here.\033[0m\n'
@@ -490,7 +511,7 @@ step "Step 7/8  Unlock secrets (git-crypt)"
 if ! is_locked; then
   ok "already unlocked"
 else
-  [ -n "$KEYFILE" ] && [ -s "$KEYFILE" ] || die "repo is encrypted but no git-crypt key was given (re-run and paste it at question 1/4)"
+  [ -n "$KEYFILE" ] && [ -s "$KEYFILE" ] || die "repo is encrypted but no git-crypt key was given (re-run and paste it at question 1/5)"
   (cd "$STACK_DIR" && git-crypt unlock "$KEYFILE") || die "git-crypt unlock failed (wrong key?)"
   is_locked && die "files still encrypted after unlock"
   ok "unlocked (.env readable; key kept only in $STACK_DIR/.git/git-crypt/keys/)"
