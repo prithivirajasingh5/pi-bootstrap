@@ -124,7 +124,7 @@ claude.ai/code), and any session you start there runs *on the Pi*.
 |---|---|
 | Install | Anthropic's native installer → `~/.local/bin/claude` (on PATH via `zshrc`) |
 | Sign-in | your claude.ai subscription, stored in `~/.claude/.credentials.json` (mode 600, never in this repo) |
-| Service | `claude-remote.service`: `claude remote-control` as `pi`, started at boot, restarted 30 s after any exit |
+| Services | `claude-signin.service` (renewal, below) and `claude-remote.service`: `claude remote-control` as `pi`, started at boot, restarted 30 s after any exit |
 | Sessions start in | `~/claude` (`CLAUDE_WORKDIR`); Claude can still `cd` anywhere and use `sudo` |
 | Permission mode | `auto` (`CLAUDE_PERMISSION_MODE`): a safety check approves routine actions and asks you on the phone for risky ones. Others: `default`, `acceptEdits`, `bypassPermissions` |
 
@@ -133,9 +133,22 @@ long-lived token from `claude setup-token` can only call the model, not open Rem
 Claude Code accepts the folder-trust answer only from a person: a scripted `y` is rejected as
 "arrived too quickly".
 
-**The sign-in expires** (about four weeks; using it does not extend it). Check with
-`claude auth status --text`. When the Pi disappears from the app, sign in again by re-running
-`claude-remote.sh` (or `bootstrap.sh`; question 5/5 notices); it restarts the service for you.
+**The sign-in expires** after about four weeks, and using it doesn't extend it. Renewal works from
+the phone: `claude-signin.service` ([`claude-signin.py`](claude-signin.py), installed as
+`/usr/local/bin/claude-signin`) checks `claude auth status --json` every 30 minutes. When 5 days or
+fewer are left, or you're signed out, it sends you a sign-in link via `messenger` (at most once every 20 h).
+Open it, approve, and reply to the Telegram bot with `claude <code>`. The helper finishes the sign-in
+and restarts `claude-remote`.
+
+| Telegram bot | |
+|---|---|
+| `claude` | when the sign-in ends |
+| `claude login` | send a sign-in link now (valid 30 min) |
+| `claude <code>` | finish the sign-in with the code the link showed |
+
+The helper listens only on `127.0.0.1:8765`; the bot (host networking, chat allowlist) is its only
+client. The bot side lives in the `docker` repo (`telegram_bot_server.py`). Without Telegram, re-run
+`claude-remote.sh` to sign in at the terminal.
 
 **Trust and access.** Sessions run as `pi`, who has passwordless sudo: effectively root on the Pi. Your
 claude.ai account is therefore a key to this machine — keep two-factor sign-in on.
@@ -144,6 +157,7 @@ claude.ai account is therefore a key to this machine — keep two-factor sign-in
 journalctl -u claude-remote -f              # live log (session links, connects)
 sudo systemctl restart claude-remote        # after a new sign-in or settings change
 sudo systemctl disable --now claude-remote  # turn it off
+journalctl -u claude-signin -f              # renewal helper log
 ```
 
 ## zsh setup
