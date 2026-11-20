@@ -8,11 +8,12 @@ WORDCHARS=${WORDCHARS//\/}          # Ctrl+W stops at '/'
 PROMPT_EOL_MARK=""                  # no '%' at the end of output without a trailing newline
 
 # ---- PATH -------------------------------------------------------------------
-# All custom scripts (messenger, ren, run, ...) live in the docker stack's python-jobs/jobs folder,
+# All custom scripts (messenger, ren, run, ...) live in the docker stack's python-jobs/jobs folder
+# (~/claude/docker),
 # so they can be run by name. Appended, so a system command with the same name still wins.
 # (zsh shells only: sudo, cron and systemd use their own PATH; call those by full path.)
 typeset -U path                     # no duplicates when this file is re-sourced
-[ -d ~/docker/python-jobs/jobs ] && path+=(~/docker/python-jobs/jobs)
+[ -d ~/claude/docker/python-jobs/jobs ] && path+=(~/claude/docker/python-jobs/jobs)
 [ -d ~/.local/bin ] && path=(~/.local/bin $path)   # claude (Claude Code's native installer puts it here)
 
 # ---- history ----------------------------------------------------------------
@@ -57,7 +58,7 @@ alias dc='docker compose'
 alias dps='docker ps --format "table {{.Names}}\t{{.Status}}"'
 
 # ---- prompt (same look as the laptop) ----------------------------------------------
-#   ┌──(pi@opi)-[~/docker]
+#   ┌──(pi@opi)-[~/claude/docker]
 #   └─$                                    exit code ⨯ / background jobs ⚙ on the right
 PROMPT=$'%F{%(#.red.green)}┌──(%B%F{%(#.red.green)}%n@%m%b%F{%(#.red.green)})-[%B%F{reset}%(6~.%-1~/…/%4~.%5~)%b%F{%(#.red.green)}]\n└─%B%(#.%F{red}#.%F{green}$)%b%F{reset} '
 RPROMPT=$'%(?.. %? %F{red}%B⨯%b%F{reset})%(1j. %j %F{yellow}%B⚙%b%F{reset}.)'

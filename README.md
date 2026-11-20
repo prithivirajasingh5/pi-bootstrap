@@ -29,7 +29,7 @@ After the one-time sudo password, it asks **five questions** and then runs unatt
 | Prompt | When | What to give it |
 |---|---|---|
 | **sudo password** | only if `pi` can't sudo without one | the `pi` password set in Imager (asked once; then passwordless sudo is set up) |
-| **Question 1/5 — bootstrap passphrase** | only if GitHub doesn't accept this Pi yet or `~/docker` needs unlocking | Answer Enter (yes), then type the passphrase when `age` asks. It decrypts [`secrets.age`](#secrets-bundle) and supplies both the deploy key and the git-crypt key |
+| **Question 1/5 — bootstrap passphrase** | only if GitHub doesn't accept this Pi yet or `~/claude/docker` needs unlocking | Answer Enter (yes), then type the passphrase when `age` asks. It decrypts [`secrets.age`](#secrets-bundle) and supplies both the deploy key and the git-crypt key |
 | *(fallback)* GitHub token | if you answer `n` above, or the bundle can't be opened | a [fine-grained token](https://github.com/settings/personal-access-tokens/new): *Only select repositories → `docker`*, permission *Administration: Read and write*, short expiry. Registers this Pi's own deploy key, then discarded. Enter = add the printed key by hand |
 | *(fallback)* git-crypt key | same | one base64 line: `cd ~/claude/docker && git-crypt export-key - \| base64 -w0; echo` (or the copy in Drive) |
 | **Question 2/5 — Wi-Fi chip** | unless already disabled | `y` adds `dtoverlay=disable-wifi` to `/boot/firmware/config.txt` (default **No**). Warns first if you are connected over Wi-Fi or Ethernet has no link |
@@ -53,10 +53,10 @@ and heat; the trade-off is losing Wi-Fi as a backup link if Ethernet fails.
 | 1/8 | Passwordless sudo for `pi` (Raspberry Pi OS default; Imager's setup omits it) |
 | — | Questions 1/5–4/5 (above). Question 1/5 also creates `~/.ssh/id_ed25519_github` (github.com only), checks github.com's published fingerprint and registers the deploy key |
 | 2/8 | `apt install` git, git-crypt, docker.io, docker-compose (Compose v2), zsh, zsh-syntax-highlighting, zsh-autosuggestions, and network monitors nload, iftop, vnstat |
-| 3/8 | Adds `pi` to the `docker` group; caps container logs (`/etc/docker/daemon.json`: 10 MB × 3 per container); makes zsh the login shell, installs [`zshrc`](zshrc) as `~/.zshrc` (existing one backed up), which puts the stack's custom scripts (`~/docker/python-jobs/jobs`: `messenger`, `ren`, `run`, …) on PATH |
+| 3/8 | Adds `pi` to the `docker` group; caps container logs (`/etc/docker/daemon.json`: 10 MB × 3 per container); makes zsh the login shell, installs [`zshrc`](zshrc) as `~/.zshrc` (existing one backed up), which puts the stack's custom scripts (`~/claude/docker/python-jobs/jobs`: `messenger`, `ren`, `run`, …) on PATH |
 | 4/8 | Creates `~/movies`, `~/movies_archive`, `~/Downloads` (paths used by the stack's `.env`) |
 | 5/8 | Applies the Wi-Fi / Bluetooth choices to `config.txt` (reboot needed; the script tells you) |
-| 6/8 | Git identity; clones `docker` to `~/docker`, or updates an existing checkout; then switches it to the version from question 4/5 (main, or the release tag). Refuses if the checkout has local changes, except changes the apps make to their own config (`qBittorrent.conf`, certbot's `renewal/*.conf`): those are stashed, the version switched, and the Pi's values put back. If GitHub changed the same file, GitHub's version wins and the Pi's stays in `git stash list` |
+| 6/8 | Git identity; **moves an old `~/docker` checkout to `~/claude/docker`** if there is one (stops the stack, removes the three bind volumes that recorded the old path; no files are deleted); clones `docker` to `~/claude/docker`, or updates an existing checkout; then switches it to the version from question 4/5 (main, or the release tag). Refuses if the checkout has local changes, except changes the apps make to their own config (`qBittorrent.conf`, certbot's `renewal/*.conf`): those are stashed, the version switched, and the Pi's values put back. If GitHub changed the same file, GitHub's version wins and the Pi's stays in `git stash list` |
 | 7/8 | Unlocks it with the git-crypt key from question 1/5 (temp key file shredded afterwards) — skipped if already unlocked |
 | 8/8 | `docker compose up -d --build` (recreating the containers if step 6 changed the version; builds the local images `python-jobs` and `printmail`, the email-to-print service with its own CUPS: nothing printing-related is installed on the Pi itself), waits for health checks, prints the status table; enables the **container-watchdog** timer (Telegram alerts via `messenger` for crash loops / unhealthy or stopped containers / full disk, auto-stops runaway crash loops) |
 
@@ -69,7 +69,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/prithivirajasingh5/pi-bootst
 ```
 
 Non-interactive inputs (avoid on shared machines; environment variables can be seen in `ps`):
-`GITHUB_TOKEN`, `GITCRYPT_KEY_B64`, `DISABLE_WIFI` / `DISABLE_BT` (`yes`/`no`), `STACK_REF` (`main` or e.g. `stable-v1`), `STACK_DIR` (default `~/docker`), `CLAUDE_REMOTE` (`yes`/`no`).
+`GITHUB_TOKEN`, `GITCRYPT_KEY_B64`, `DISABLE_WIFI` / `DISABLE_BT` (`yes`/`no`), `STACK_REF` (`main` or e.g. `stable-v1`), `STACK_DIR` (default `~/claude/docker`), `CLAUDE_REMOTE` (`yes`/`no`).
 
 ## Stable releases
 
@@ -100,7 +100,7 @@ factor 2^18). Inside is a tar with three fixed names:
   makes you decrypt once to prove the saved passphrase, registers the key, and offers to delete the old
   shared key. Then commit and push `secrets.age`.
 - **Check** any time (on a Pi): `bootstrap.sh --check-secrets`. It proves the passphrase opens the bundle,
-  the deploy key authenticates and the git-crypt key matches `~/docker`.
+  the deploy key authenticates and the git-crypt key matches `~/claude/docker`.
 - **Look inside** without writing files: `age -d secrets.age | tar -tv`.
 - **Security:** the file is public, so its protection is the passphrase alone; a strong generated one is
   infeasible to brute-force. Anyone with the passphrase gets read-write access to the `docker` repo and its
@@ -165,7 +165,7 @@ journalctl -u claude-signin -f              # renewal helper log
 Matches the laptop's look without oh-my-zsh:
 
 ```
-┌──(pi@opi)-[~/docker]
+┌──(pi@opi)-[~/claude/docker]
 └─$                                        (exit code ⨯ / background jobs ⚙ on the right)
 ```
 

@@ -183,7 +183,7 @@ if [ "$changed" -eq 1 ] || ! systemctl is-active --quiet "$SIGNIN_UNIT"; then su
 sleep 3
 systemctl is-active --quiet "$SIGNIN_UNIT" || { sudo journalctl -u "$SIGNIN_UNIT" -n 20 --no-pager -o cat; die "$SIGNIN_UNIT is not running"; }
 ok "running: $(sudo journalctl -u "$SIGNIN_UNIT" -n 1 --no-pager -o cat)"
-[ -x "$HOME/docker/python-jobs/jobs/messenger" ] || warn "messenger not found yet (it comes with the docker stack); links can't be sent until it is there"
+[ -x "$HOME/claude/docker/python-jobs/jobs/messenger" ] || warn "messenger not found yet (it comes with the docker stack); links can't be sent until it is there"
 
 step "Done"
 info "Phone: Claude app -> Code tab -> pick \"$RC_NAME\"."

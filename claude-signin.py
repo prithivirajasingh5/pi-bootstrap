@@ -35,7 +35,9 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 CLAUDE = os.path.expanduser("~/.local/bin/claude")
-MESSENGER = os.path.expanduser(os.environ.get("CLAUDE_SIGNIN_MESSENGER", "~/docker/python-jobs/jobs/messenger"))
+MESSENGER = os.path.expanduser(os.environ.get("CLAUDE_SIGNIN_MESSENGER", "~/claude/docker/python-jobs/jobs/messenger"))
+# messenger reads the token from the stack's .env (<repo>/python-jobs/jobs/messenger -> <repo>/.env).
+MESSENGER_ENV = os.path.normpath(os.path.join(os.path.dirname(MESSENGER), "..", "..", ".env"))
 PORT = int(os.environ.get("CLAUDE_SIGNIN_PORT", "8765"))
 SERVICE = "claude-remote.service"
 WARN_DAYS = 5              # start asking when the sign-in ends within this many days
@@ -55,7 +57,8 @@ def log(msg):
 def notify(text):
     """Send a Telegram message with messenger. True if delivered."""
     try:
-        r = subprocess.run([MESSENGER, "--", text], capture_output=True, text=True, timeout=60)
+        r = subprocess.run([MESSENGER, "--", text], capture_output=True, text=True, timeout=60,
+                           env={**os.environ, "MESSENGER_ENV_FILE": MESSENGER_ENV})
     except (OSError, subprocess.TimeoutExpired) as e:
         log(f"messenger could not run ({MESSENGER}): {e}")
         return False
