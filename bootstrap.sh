@@ -8,14 +8,14 @@
 #   --no-stack   only shell setup, folders and Wi-Fi/Bluetooth choices (no GitHub, clone, unlock or docker start)
 #   --no-start   do everything except `docker compose up -d`
 #   --check-secrets  only test the published secrets.age: decrypt it with your passphrase, prove the
-#                    bundled deploy key works on GitHub and the git-crypt key matches ~/docker (changes nothing)
+#                    bundled deploy key works on GitHub and the git-crypt key matches ~/claude/docker (changes nothing)
 #   -h, --help
 #
 # Flow: sudo setup -> five questions (1/5 GitHub, 2/5 Wi-Fi chip, 3/5 Bluetooth chip, 4/5 stack version,
 #       5/5 Claude Code) -> the rest
 # runs unattended. Safe to re-run: every step checks first and skips what is already done.
 # Secrets are only ever typed at hidden prompts; nothing secret is stored by this script
-# except what git-crypt itself keeps in ~/docker/.git/git-crypt/keys/.
+# except what git-crypt itself keeps in ~/claude/docker/.git/git-crypt/keys/.
 #
 # Question 1/5 normally needs only your bootstrap passphrase: it decrypts secrets.age (made by
 # make-secrets.sh) holding a shared deploy key + the git-crypt key. Fallback: GitHub token + pasted key.
@@ -28,7 +28,7 @@
 #   STACK_REF          main or a stable-vN tag of the docker repo — answer question 4/5 (default main)
 #   CLAUDE_REMOTE      yes/no — answer question 5/5 (claude-remote.sh also reads CLAUDE_WORKDIR,
 #                      CLAUDE_PERMISSION_MODE, CLAUDE_RC_NAME)
-#   STACK_DIR          where to clone the repo (default ~/docker)
+#   STACK_DIR          where to clone the repo (default ~/claude/docker, like the laptop)
 # =============================================================================
 set -Eeuo pipefail
 
@@ -36,7 +36,11 @@ REPO_OWNER="prithivirajasingh5"
 REPO_NAME="docker"
 REPO_SSH="git@github.com:${REPO_OWNER}/${REPO_NAME}.git"
 BOOTSTRAP_RAW="https://raw.githubusercontent.com/${REPO_OWNER}/pi-bootstrap/main"
-STACK_DIR="${STACK_DIR:-$HOME/docker}"
+STACK_DIR="${STACK_DIR:-$HOME/claude/docker}"
+OLD_STACK_DIR="$HOME/docker"   # where the stack lived before 2026-11-20; step 6 moves it
+# The questions run before step 6, so they look at wherever the checkout is right now.
+CUR_STACK_DIR="$STACK_DIR"
+if [ ! -d "$STACK_DIR/.git" ] && [ -d "$OLD_STACK_DIR/.git" ]; then CUR_STACK_DIR="$OLD_STACK_DIR"; fi
 DEPLOY_KEY="$HOME/.ssh/id_ed25519_github"
 GIT_NAME="Prithivirajasingh K"
 GIT_EMAIL="prithivirajasingh5@gmail.com"
@@ -99,7 +103,7 @@ fetch() {  # fetch <name> <dest>
 # -n: ssh must not read stdin, or it swallows anything typed ahead for the next prompt.
 github_greeting() { ssh -n -T -o BatchMode=yes git@github.com 2>&1 || true; }
 github_ok() { local g; g="$(github_greeting)"; [[ "$g" == *"successfully authenticated"* ]]; }
-is_locked() { [ "$(head -c 9 "$STACK_DIR/.env" 2>/dev/null | tail -c 8)" = "GITCRYPT" ]; }
+is_locked() { [ "$(head -c 9 "${1:-$STACK_DIR}/.env" 2>/dev/null | tail -c 8)" = "GITCRYPT" ]; }   # [dir]
 overlay_set() { grep -qx "dtoverlay=$1" "$CONFIG_TXT"; }
 
 # Download secrets.age and decrypt it into BUNDLE_DIR (age prompts for the passphrase on the terminal).
@@ -156,12 +160,12 @@ if [ "$CHECK_SECRETS" -eq 1 ]; then
   open_bundle || die "could not open the bundle"
   if key_works "$BUNDLE_DIR/deploy_key"; then ok "bundled deploy key authenticates to GitHub ($(ssh-keygen -lf "$BUNDLE_DIR/deploy_key.pub" | awk '{print $2}'))"
   else die "bundled deploy key is NOT accepted by GitHub (revoked?) — re-run make-secrets.sh"; fi
-  if [ -f "$STACK_DIR/.git/git-crypt/keys/default" ]; then
-    cmp -s "$BUNDLE_DIR/gitcrypt.key" "$STACK_DIR/.git/git-crypt/keys/default" \
-      && ok "bundled git-crypt key is identical to the key $STACK_DIR uses" \
-      || die "bundled git-crypt key differs from $STACK_DIR's key"
+  if [ -f "$CUR_STACK_DIR/.git/git-crypt/keys/default" ]; then
+    cmp -s "$BUNDLE_DIR/gitcrypt.key" "$CUR_STACK_DIR/.git/git-crypt/keys/default" \
+      && ok "bundled git-crypt key is identical to the key $CUR_STACK_DIR uses" \
+      || die "bundled git-crypt key differs from $CUR_STACK_DIR's key"
   else
-    [ "$(head -c 9 "$BUNDLE_DIR/gitcrypt.key" | tail -c 8)" = "GITCRYPT" ] && ok "bundled git-crypt key has a valid header ($STACK_DIR not unlocked here to compare)"
+    [ "$(head -c 9 "$BUNDLE_DIR/gitcrypt.key" | tail -c 8)" = "GITCRYPT" ] && ok "bundled git-crypt key has a valid header ($CUR_STACK_DIR not unlocked here to compare)"
   fi
   step "secrets.age is good: your passphrase restores a fresh Pi"
   exit 0
@@ -188,9 +192,9 @@ else
   fi
 
   need_github=0; github_ok || need_github=1
-  need_key=0; { [ -d "$STACK_DIR/.git" ] && ! is_locked; } || need_key=1
+  need_key=0; { [ -d "$CUR_STACK_DIR/.git" ] && ! is_locked "$CUR_STACK_DIR"; } || need_key=1
   [ "$need_github" -eq 0 ] && { g="$(github_greeting)"; g="${g#*Hi }"; ok "GitHub already accepts this Pi's key: Hi ${g%%!*}"; }
-  [ "$need_key" -eq 0 ] && ok "$STACK_DIR is already unlocked; no git-crypt key needed"
+  [ "$need_key" -eq 0 ] && ok "$CUR_STACK_DIR is already unlocked; no git-crypt key needed"
 
   # Preferred: one passphrase opens secrets.age (shared deploy key + git-crypt key).
   if [ "$need_github" -eq 1 ] || [ "$need_key" -eq 1 ]; then
@@ -315,9 +319,9 @@ else
   while read -r sha tag; do
     REF_NAMES+=("$tag"); REF_DESC+=("$tag ($sha)")
   done < <(sed -nE 's#^([0-9a-f]{7})[0-9a-f]*\trefs/tags/(stable-v[0-9]+)\^\{\}$#\1 \2#p' <<< "$refs" | sort -k2,2rV)
-  if [ -d "$STACK_DIR/.git" ]; then
-    cur="$(git -C "$STACK_DIR" describe --tags --exact-match HEAD 2>/dev/null || git -C "$STACK_DIR" branch --show-current)"
-    info "this Pi runs: ${cur:-detached} ($(git -C "$STACK_DIR" rev-parse --short HEAD))"
+  if [ -d "$CUR_STACK_DIR/.git" ]; then
+    cur="$(git -C "$CUR_STACK_DIR" describe --tags --exact-match HEAD 2>/dev/null || git -C "$CUR_STACK_DIR" branch --show-current)"
+    info "this Pi runs: ${cur:-detached} ($(git -C "$CUR_STACK_DIR" rev-parse --short HEAD))"
   fi
   STACK_REF="${STACK_REF:-}"
   if [ -n "$STACK_REF" ]; then
@@ -457,6 +461,28 @@ ok "git identity: $(git config --global user.name) <$(git config --global user.e
 # Switch the checkout to $STACK_REF: main = fast-forward to GitHub's main; stable-vN = that release
 # (detached HEAD, which is normal for a tag). STACK_CHANGED=1 if the code that runs is now different.
 STACK_CHANGED=0
+
+# Older installs kept the stack in ~/docker. Move it to $STACK_DIR (same folder name, so Compose's
+# project, container and volume names stay the same). Three named volumes (shared, scripts,
+# samba_share) are bind mounts that recorded the old absolute path when they were created, so they
+# are removed and Compose recreates them in step 8. Removing a bind volume deletes no files.
+if [ "$STACK_DIR" != "$OLD_STACK_DIR" ] && [ -d "$OLD_STACK_DIR/.git" ]; then
+  [ -e "$STACK_DIR" ] && die "both $OLD_STACK_DIR and $STACK_DIR exist; keep one (move or delete the other) and re-run"
+  [ "$(basename "$OLD_STACK_DIR")" = "$(basename "$STACK_DIR")" ] || die "moving the stack must keep its folder name (Compose project name)"
+  info "moving the stack: $OLD_STACK_DIR -> $STACK_DIR (containers stop for a few minutes)"
+  sudo systemctl stop container-watchdog.timer 2>/dev/null || true   # no "container down" alerts meanwhile; step 8 starts it
+  (cd "$OLD_STACK_DIR" && sudo docker compose down) 2>&1 | tail -3
+  project="$(basename "$OLD_STACK_DIR")"
+  for v in $(sudo docker volume ls -q --filter "label=com.docker.compose.project=$project"); do
+    dev="$(sudo docker volume inspect -f '{{index .Options "device"}}' "$v")"
+    if [[ "$dev" == "$OLD_STACK_DIR/"* ]]; then sudo docker volume rm "$v" >/dev/null; ok "removed volume $v (pointed at $dev; files kept)"; fi
+  done
+  mkdir -p "$(dirname "$STACK_DIR")"
+  mv "$OLD_STACK_DIR" "$STACK_DIR"
+  STACK_CHANGED=1
+  ok "moved to $STACK_DIR"
+fi
+
 switch_stack() {
   local g=(git -C "$STACK_DIR")
   if [ "$STACK_REF" = main ]; then
@@ -550,7 +576,11 @@ fi
 # crash loops / unhealthy or stopped containers / full disk, and stops runaway crash loops.
 if [ -f "$STACK_DIR/host/container-watchdog.timer" ]; then
   for u in container-watchdog.service container-watchdog.timer; do
-    sed -e "s#/home/pi/docker#$STACK_DIR#g" -e "s#^User=pi\$#User=$USER#" "$STACK_DIR/host/$u" | sudo tee "/etc/systemd/system/$u" >/dev/null
+    # Path in the unit: /home/pi/claude/docker (or /home/pi/docker in releases before the move).
+    # The Environment line gives older releases' script the right paths too (newer ones work them out).
+    sed -E -e "s#/home/pi/(claude/)?docker#$STACK_DIR#g" -e "s#^User=pi\$#User=$USER#" \
+      -e "/^ExecStart=/i Environment=ENV_FILE=$STACK_DIR/.env SHARED_DIR=$STACK_DIR/shared MESSENGER=$STACK_DIR/python-jobs/jobs/messenger" \
+      "$STACK_DIR/host/$u" | sudo tee "/etc/systemd/system/$u" >/dev/null
   done
   sudo systemctl daemon-reload
   sudo systemctl enable --now container-watchdog.timer >/dev/null 2>&1
