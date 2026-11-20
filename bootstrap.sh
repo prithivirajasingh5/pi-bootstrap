@@ -47,7 +47,8 @@ GIT_EMAIL="prithivirajasingh5@gmail.com"
 MEDIA_DIRS=(movies movies_archive Downloads)   # must match .env paths
 GITHUB_ED25519_FP="SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"  # github.com's published key
 PACKAGES=(git git-crypt docker.io docker-compose zsh zsh-syntax-highlighting zsh-autosuggestions curl ca-certificates
-          nload iftop vnstat)   # network: live graph / per-connection / live + daily-monthly history
+          nload iftop vnstat    # network: live graph / per-connection / live + daily-monthly history
+          smartmontools gh)     # SSD health for health-report; GitHub CLI
 SECRETS_URL="$BOOTSTRAP_RAW/secrets.age"
 CONFIG_TXT=/boot/firmware/config.txt; [ -f "$CONFIG_TXT" ] || CONFIG_TXT=/boot/config.txt   # older Pi OS
 
@@ -376,6 +377,11 @@ else
   ok "installed"
 fi
 # Note: Debian's 'docker-compose' package is Compose v2 and provides 'docker compose'.
+# smartmontools also enables smartd, which can't see a disk behind a USB adapter (fails at boot) and
+# has no way to alert here; health-report reads SMART weekly instead.
+# (Debian's unit is smartmontools.service; smartd is only an alias of it.)
+if systemctl is-enabled --quiet smartmontools 2>/dev/null; then sudo systemctl disable --now smartmontools >/dev/null 2>&1; ok "smartd off (health-report checks SMART weekly)"; fi
+sudo systemctl reset-failed smartmontools 2>/dev/null || true
 
 # =========================================================================================
 step "Step 3/8  Docker group, zsh shell and ~/.zshrc"
@@ -398,6 +404,19 @@ else
   sudo systemctl restart docker
   DOCKER_LOGCFG_CHANGED=1
   ok "Docker log rotation set (10m x 3 per container); Docker restarted"
+fi
+
+# Keep the system log on disk. Raspberry Pi OS keeps it in RAM only (Storage=volatile, kind to SD
+# cards): every reboot wiped it, and the RAM cap held only hours. On an SSD that protection isn't
+# needed, and health-report needs a week of history. Capped at 500 MB / 2 months.
+want_journald=$'[Journal]\nStorage=persistent\nSystemMaxUse=500M\nMaxRetentionSec=2month'
+if [ "$(cat /etc/systemd/journald.conf.d/90-persistent.conf 2>/dev/null)" = "$want_journald" ]; then
+  ok "system log already kept on disk"
+else
+  sudo mkdir -p /etc/systemd/journald.conf.d /var/log/journal
+  printf '%s\n' "$want_journald" | sudo tee /etc/systemd/journald.conf.d/90-persistent.conf >/dev/null
+  sudo systemctl restart systemd-journald && sudo journalctl --flush
+  ok "system log now kept on disk (/var/log/journal, max 500 MB / 2 months)"
 fi
 
 ZSH_BIN="$(command -v zsh)"
@@ -586,6 +605,38 @@ if [ -f "$STACK_DIR/host/container-watchdog.timer" ]; then
   sudo systemctl enable --now container-watchdog.timer >/dev/null 2>&1
   ok "container-watchdog timer enabled (every 5 min; logs: journalctl -u container-watchdog)"
 fi
+
+# Weekly health report (health-report.sh): facts of the week -> Claude's diagnosis -> Telegram.
+hr_tmp="$(mktemp)"; fetch health-report.sh "$hr_tmp"
+if ! cmp -s "$hr_tmp" /usr/local/bin/health-report; then sudo install -m 0755 "$hr_tmp" /usr/local/bin/health-report; fi
+rm -f "$hr_tmp"
+hr_service="[Unit]
+Description=Weekly health report: collect, let Claude diagnose, send to Telegram
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=$USER
+Environment=HOME=$HOME STACK_DIR=$STACK_DIR
+ExecStart=/usr/local/bin/health-report
+TimeoutStartSec=30min"
+hr_timer="[Unit]
+Description=Weekly health report
+
+[Timer]
+OnCalendar=Sun 10:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+if [ "$(cat /etc/systemd/system/health-report.service 2>/dev/null)" != "$hr_service" ] || [ "$(cat /etc/systemd/system/health-report.timer 2>/dev/null)" != "$hr_timer" ]; then
+  printf '%s\n' "$hr_service" | sudo tee /etc/systemd/system/health-report.service >/dev/null
+  printf '%s\n' "$hr_timer" | sudo tee /etc/systemd/system/health-report.timer >/dev/null
+  sudo systemctl daemon-reload
+fi
+sudo systemctl enable --now health-report.timer >/dev/null 2>&1
+ok "health-report timer enabled (Sundays 10:00; on demand: sudo systemctl start health-report)"
 
 # =========================================================================================
 step "Finished"
