@@ -88,23 +88,24 @@ To run a release's own copy of this script too (if bootstrap itself changed sinc
 ## Secrets bundle
 
 `secrets.age` is an [age](https://age-encryption.org) file encrypted with your passphrase (scrypt, work
-factor 2^18). Inside is a tar with three fixed names:
+factor 2^18). Inside is a tar with these fixed names:
 
 | File | Used as |
 |---|---|
 | `deploy_key`, `deploy_key.pub` | a **shared** read-write GitHub deploy key for the `docker` repo (titled *opi shared (pi-bootstrap …)*), installed as `~/.ssh/id_ed25519_github` |
 | `gitcrypt.key` | the `docker` repo's git-crypt key, used once for `git-crypt unlock` and then shredded |
+| `gpg-secret.asc` | **your GPG key** (since 2026-11-20), imported with ultimate trust when the Pi doesn't have it: the Pi then unlocks every git-crypt repo, like the laptop. Bundles without it still work |
 
 - **Create / rotate** (laptop, real terminal): `./make-secrets.sh` — generates a new shared deploy key,
   encrypts the bundle (press Enter at age's prompt to get a strong generated passphrase; save it in Drive),
   makes you decrypt once to prove the saved passphrase, registers the key, and offers to delete the old
   shared key. Then commit and push `secrets.age`.
 - **Check** any time (on a Pi): `bootstrap.sh --check-secrets`. It proves the passphrase opens the bundle,
-  the deploy key authenticates and the git-crypt key matches `~/claude/docker`.
+  the deploy key authenticates, the git-crypt key matches `~/claude/docker`, and the GPG key is yours.
 - **Look inside** without writing files: `age -d secrets.age | tar -tv`.
 - **Security:** the file is public, so its protection is the passphrase alone; a strong generated one is
   infeasible to brute-force. Anyone with the passphrase gets read-write access to the `docker` repo and its
-  secrets. If it may have leaked: run `make-secrets.sh` (new key + passphrase), delete the old deploy key,
+  secrets, **and your GPG key, which unlocks every repo** (it has no passphrase of its own). If it may have leaked: run `make-secrets.sh` (new key + passphrase), delete the old deploy key,
   and change the secrets inside the `docker` repo (the git-crypt key itself can't be revoked).
 
 ## After it finishes
@@ -126,7 +127,7 @@ claude.ai/code), and any session you start there runs *on the Pi*.
 | Sign-in | your claude.ai subscription, stored in `~/.claude/.credentials.json` (mode 600, never in this repo) |
 | Services | `claude-signin.service` (renewal, below) and `claude-remote.service`: `claude remote-control` as `pi`, started at boot, restarted 30 s after any exit |
 | GitHub | `gh` signed in as you (device code approved on the phone): push to every repo, create repos, releases. `git` uses it for https URLs; `~/claude/docker` keeps its SSH deploy key. pi-bootstrap is cloned at `~/claude/pi-bootstrap` |
-| Your laptop setup | `/new-project` and `/git-check` ([`opi-claude/commands/`](opi-claude/commands)), the session-start sync check ([`opi-claude/hooks/sync-check.sh`](opi-claude/hooks/sync-check.sh)), and your GPG **public** key ([`opi-claude/gpg-public.asc`](opi-claude/gpg-public.asc)) so new projects are git-crypt encrypted to it. Your private key stays off the Pi: existing encrypted repos clone but stay locked here |
+| Your laptop setup | `/new-project` and `/git-check` ([`opi-claude/commands/`](opi-claude/commands)), the session-start sync check ([`opi-claude/hooks/sync-check.sh`](opi-claude/hooks/sync-check.sh)), and your GPG **public** key ([`opi-claude/gpg-public.asc`](opi-claude/gpg-public.asc)). The **secret** key comes from the secrets bundle (question 1/5), so the Pi unlocks all your repos like the laptop |
 | Sessions start in | `~/claude` (`CLAUDE_WORKDIR`); Claude can still `cd` anywhere and use `sudo` |
 | House rules | [`opi-CLAUDE.md`](opi-CLAUDE.md) → `~/claude/CLAUDE.md`, read by every session: **phone first** (Claude runs every command itself and sends you links/codes in the chat or by `messenger`, never "use the laptop"), layout, projects, releases, git (pull first, push after each commit), secrets, what to ask before doing. Re-running replaces it (old copy kept as `CLAUDE.md.bak.<time>`) |
 | Permission mode | `auto` (`CLAUDE_PERMISSION_MODE`): a safety check approves routine actions and asks you on the phone for risky ones. Others: `default`, `acceptEdits`, `bypassPermissions` |
