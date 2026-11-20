@@ -52,13 +52,13 @@ and heat; the trade-off is losing Wi-Fi as a backup link if Ethernet fails.
 |---|---|
 | 1/8 | Passwordless sudo for `pi` (Raspberry Pi OS default; Imager's setup omits it) |
 | — | Questions 1/5–4/5 (above). Question 1/5 also creates `~/.ssh/id_ed25519_github` (github.com only), checks github.com's published fingerprint and registers the deploy key |
-| 2/8 | `apt install` git, git-crypt, docker.io, docker-compose (Compose v2), zsh, zsh-syntax-highlighting, zsh-autosuggestions, and network monitors nload, iftop, vnstat |
-| 3/8 | Adds `pi` to the `docker` group; caps container logs (`/etc/docker/daemon.json`: 10 MB × 3 per container); makes zsh the login shell, installs [`zshrc`](zshrc) as `~/.zshrc` (existing one backed up), which puts the stack's custom scripts (`~/claude/docker/python-jobs/jobs`: `messenger`, `ren`, `run`, …) on PATH |
+| 2/8 | `apt install` git, git-crypt, docker.io, docker-compose (Compose v2), zsh, zsh-syntax-highlighting, zsh-autosuggestions, network monitors nload, iftop, vnstat, smartmontools (SSD health; its always-on `smartd` is switched off, see health report) and gh |
+| 3/8 | Adds `pi` to the `docker` group; caps container logs (`/etc/docker/daemon.json`: 10 MB × 3 per container); keeps the **system log on disk** (Pi OS keeps it in RAM only, so each reboot wiped it and it held only hours; now `/var/log/journal`, max 500 MB / 2 months); makes zsh the login shell, installs [`zshrc`](zshrc) as `~/.zshrc` (existing one backed up), which puts the stack's custom scripts (`~/claude/docker/python-jobs/jobs`: `messenger`, `ren`, `run`, …) on PATH |
 | 4/8 | Creates `~/movies`, `~/movies_archive`, `~/Downloads` (paths used by the stack's `.env`) |
 | 5/8 | Applies the Wi-Fi / Bluetooth choices to `config.txt` (reboot needed; the script tells you) |
 | 6/8 | Git identity; **moves an old `~/docker` checkout to `~/claude/docker`** if there is one (stops the stack, removes the three bind volumes that recorded the old path; no files are deleted); clones `docker` to `~/claude/docker`, or updates an existing checkout; then switches it to the version from question 4/5 (main, or the release tag). Refuses if the checkout has local changes, except changes the apps make to their own config (`qBittorrent.conf`, certbot's `renewal/*.conf`): those are stashed, the version switched, and the Pi's values put back. If GitHub changed the same file, GitHub's version wins and the Pi's stays in `git stash list` |
 | 7/8 | Unlocks it with the git-crypt key from question 1/5 (temp key file shredded afterwards) — skipped if already unlocked |
-| 8/8 | `docker compose up -d --build` (recreating the containers if step 6 changed the version; builds the local images `python-jobs` and `printmail`, the email-to-print service with its own CUPS: nothing printing-related is installed on the Pi itself), waits for health checks, prints the status table; enables the **container-watchdog** timer (Telegram alerts via `messenger` for crash loops / unhealthy or stopped containers / full disk, auto-stops runaway crash loops) |
+| 8/8 | `docker compose up -d --build` (recreating the containers if step 6 changed the version; builds the local images `python-jobs` and `printmail`, the email-to-print service with its own CUPS: nothing printing-related is installed on the Pi itself), waits for health checks, prints the status table; enables the **container-watchdog** timer (Telegram alerts via `messenger` for crash loops / unhealthy or stopped containers / full disk, auto-stops runaway crash loops) and the **health-report** timer (below) |
 
 ## Options
 
@@ -122,11 +122,13 @@ claude.ai/code), and any session you start there runs *on the Pi*.
 
 | | |
 |---|---|
-| Install | Anthropic's native installer → `~/.local/bin/claude` (on PATH via `zshrc`) |
+| Install | Anthropic's native installer → `~/.local/bin/claude` (on PATH via `zshrc`); `claude-update.timer` runs `claude update` on Sundays 04:30 and messages you when the version changed (Claude Code's own auto-update is off for this install) |
 | Sign-in | your claude.ai subscription, stored in `~/.claude/.credentials.json` (mode 600, never in this repo) |
 | Services | `claude-signin.service` (renewal, below) and `claude-remote.service`: `claude remote-control` as `pi`, started at boot, restarted 30 s after any exit |
+| GitHub | `gh` signed in as you (device code approved on the phone): push to every repo, create repos, releases. `git` uses it for https URLs; `~/claude/docker` keeps its SSH deploy key. pi-bootstrap is cloned at `~/claude/pi-bootstrap` |
+| Your laptop setup | `/new-project` and `/git-check` ([`opi-claude/commands/`](opi-claude/commands)), the session-start sync check ([`opi-claude/hooks/sync-check.sh`](opi-claude/hooks/sync-check.sh)), and your GPG **public** key ([`opi-claude/gpg-public.asc`](opi-claude/gpg-public.asc)) so new projects are git-crypt encrypted to it. Your private key stays off the Pi: existing encrypted repos clone but stay locked here |
 | Sessions start in | `~/claude` (`CLAUDE_WORKDIR`); Claude can still `cd` anywhere and use `sudo` |
-| House rules | [`opi-CLAUDE.md`](opi-CLAUDE.md) → `~/claude/CLAUDE.md`, read by every session: layout, git (pull first, push after each commit), secrets, what to ask before doing. Re-running replaces it (old copy kept as `CLAUDE.md.bak.<time>`) |
+| House rules | [`opi-CLAUDE.md`](opi-CLAUDE.md) → `~/claude/CLAUDE.md`, read by every session: **phone first** (Claude runs every command itself and sends you links/codes in the chat or by `messenger`, never "use the laptop"), layout, projects, releases, git (pull first, push after each commit), secrets, what to ask before doing. Re-running replaces it (old copy kept as `CLAUDE.md.bak.<time>`) |
 | Permission mode | `auto` (`CLAUDE_PERMISSION_MODE`): a safety check approves routine actions and asks you on the phone for risky ones. Others: `default`, `acceptEdits`, `bypassPermissions` |
 
 **Why two questions can't be automated.** Remote Control needs a real claude.ai sign-in; the
@@ -160,6 +162,25 @@ sudo systemctl restart claude-remote        # after a new sign-in or settings ch
 sudo systemctl disable --now claude-remote  # turn it off
 journalctl -u claude-signin -f              # renewal helper log
 ```
+
+## Health report
+
+[`health-report.sh`](health-report.sh) (installed as `/usr/local/bin/health-report`, `health-report.timer`,
+Sundays 10:00) collects the week: power and heat flags (`vcgencmd get_throttled`), SSD health (SMART
+through the USB adapter), disk and filesystem errors, memory and out-of-memory kills, kernel warnings,
+errors per service, service restarts, containers (restart counts, their error lines, watchdog alerts),
+DNS failures, pending updates, the Claude sign-in and repo sync state. Then **Claude reads it next to last
+week's report**, may dig with read-only commands (`journalctl`, `docker logs`, `systemctl status`; not
+`docker inspect`, which would show secrets), and sends you a short diagnosis on Telegram: what is
+wrong, the likely cause with evidence, and a fix. Reports stay in `~/.local/state/health-report/` (12 weeks).
+
+```bash
+sudo systemctl start health-report      # run now (diagnosis on Telegram in a few minutes)
+AI=0 SEND=0 health-report               # just print the facts
+```
+
+Its first run (2026-11-20) found the router's DNS failing for five hours, which crashed Remote Control
+188 times, plus CPU heat throttling at 70 °C.
 
 ## zsh setup
 
