@@ -7,6 +7,9 @@
 # It bundles two keys and encrypts them with a passphrase only you see:
 #   deploy_key / deploy_key.pub  a NEW shared GitHub deploy key (read-write, docker repo only)
 #   gitcrypt.key                 the docker repo's git-crypt key (`git-crypt export-key`)
+#   gpg-secret.asc               your GPG secret key: a new Pi unlocks every repo, like the laptop.
+#                                It has no passphrase of its own, so the bundle passphrase is all
+#                                that protects it: keep using a long, generated one.
 # then registers the new deploy key on GitHub and shreds every plaintext copy.
 #
 # Safety: the encrypted file is public, so its security is the passphrase. Let age generate one
@@ -19,6 +22,7 @@ REPO="prithivirajasingh5/docker"
 DOCKER_DIR="${1:-$HOME/claude/docker}"
 OUT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/secrets.age"
 TITLE_PREFIX="opi shared (pi-bootstrap"
+GPG_KEY=36495943FBDA0DF535B6FBA2E9A09FE2F41B0BFC
 
 step() { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
@@ -38,16 +42,18 @@ gh auth status >/dev/null 2>&1 || die "gh is not logged in: gh auth login"
 [ "$(head -c 9 "$DOCKER_DIR/.env" | tail -c 8)" != "GITCRYPT" ] || die "$DOCKER_DIR is locked; run git-crypt unlock there first"
 ok "age $(age --version), gh logged in, $DOCKER_DIR unlocked"
 
-step "1/4  Generate the shared deploy key and export the git-crypt key"
+step "1/4  Generate the shared deploy key, export the git-crypt and GPG keys"
 ssh-keygen -q -t ed25519 -N "" -C "opi shared deploy key (pi-bootstrap $(date +%F))" -f "$TMP/deploy_key"
 (cd "$DOCKER_DIR" && git-crypt export-key "$TMP/gitcrypt.key")
 [ "$(head -c 9 "$TMP/gitcrypt.key" | tail -c 8)" = "GITCRYPT" ] || die "exported git-crypt key looks wrong"
-ok "deploy key $(ssh-keygen -lf "$TMP/deploy_key.pub" | awk '{print $2}') and git-crypt key ($(stat -c %s "$TMP/gitcrypt.key") bytes) ready"
+gpg --batch --export-secret-keys --armor "$GPG_KEY" > "$TMP/gpg-secret.asc" 2>/dev/null
+grep -q 'BEGIN PGP PRIVATE KEY BLOCK' "$TMP/gpg-secret.asc" || die "could not export GPG secret key $GPG_KEY (is it on this machine?)"
+ok "deploy key $(ssh-keygen -lf "$TMP/deploy_key.pub" | awk '{print $2}'), git-crypt key ($(stat -c %s "$TMP/gitcrypt.key") bytes) and GPG key ready"
 
 step "2/4  Encrypt them with your passphrase"
 info "age will ask for a passphrase. Recommended: just press Enter and let age generate a strong one."
 info "COPY THE PASSPHRASE INTO GOOGLE DRIVE -> CONFIDENTIAL NOW. Without it the bundle is useless."
-tar -C "$TMP" -cf "$TMP/bundle.tar" deploy_key deploy_key.pub gitcrypt.key
+tar -C "$TMP" -cf "$TMP/bundle.tar" deploy_key deploy_key.pub gitcrypt.key gpg-secret.asc
 age -p -o "$TMP/secrets.age" "$TMP/bundle.tar"
 ok "encrypted ($(stat -c %s "$TMP/secrets.age") bytes)"
 

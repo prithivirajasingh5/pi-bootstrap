@@ -18,7 +18,8 @@
 # except what git-crypt itself keeps in ~/claude/docker/.git/git-crypt/keys/.
 #
 # Question 1/5 normally needs only your bootstrap passphrase: it decrypts secrets.age (made by
-# make-secrets.sh) holding a shared deploy key + the git-crypt key. Fallback: GitHub token + pasted key.
+# make-secrets.sh) holding a shared deploy key, the git-crypt key and your GPG key. Fallback: GitHub
+# token + pasted key (no GPG key then).
 #
 # Optional non-interactive inputs (avoid on shared machines: env vars can leak via `ps`):
 #   GITHUB_TOKEN       token used once to register the Pi's deploy key
@@ -170,6 +171,12 @@ if [ "$CHECK_SECRETS" -eq 1 ]; then
   else
     [ "$(head -c 9 "$BUNDLE_DIR/gitcrypt.key" | tail -c 8)" = "GITCRYPT" ] && ok "bundled git-crypt key has a valid header ($CUR_STACK_DIR not unlocked here to compare)"
   fi
+  if [ -s "$BUNDLE_DIR/gpg-secret.asc" ]; then
+    fpr="$(gpg --show-keys --with-colons "$BUNDLE_DIR/gpg-secret.asc" 2>/dev/null | awk -F: '$1=="fpr"{print $10; exit}')"
+    [ "$fpr" = "$GPG_KEY" ] && ok "bundled GPG secret key is $GPG_KEY" || die "bundled GPG key is $fpr, expected $GPG_KEY"
+  else
+    warn "bundle has no GPG key yet (made before 2026-11-20): re-run make-secrets.sh to add it"
+  fi
   step "secrets.age is good: your passphrase restores a fresh Pi"
   exit 0
 fi
@@ -198,9 +205,11 @@ else
   need_key=0; { [ -d "$CUR_STACK_DIR/.git" ] && ! is_locked "$CUR_STACK_DIR"; } || need_key=1
   [ "$need_github" -eq 0 ] && { g="$(github_greeting)"; g="${g#*Hi }"; ok "GitHub already accepts this Pi's key: Hi ${g%%!*}"; }
   [ "$need_key" -eq 0 ] && ok "$CUR_STACK_DIR is already unlocked; no git-crypt key needed"
+  need_gpg=0; gpg --list-secret-keys "$GPG_KEY" >/dev/null 2>&1 || need_gpg=1
+  [ "$need_gpg" -eq 0 ] && ok "your GPG key is already here (unlocks all your git-crypt repos)"
 
   # Preferred: one passphrase opens secrets.age (shared deploy key + git-crypt key).
-  if [ "$need_github" -eq 1 ] || [ "$need_key" -eq 1 ]; then
+  if [ "$need_github" -eq 1 ] || [ "$need_key" -eq 1 ] || [ "$need_gpg" -eq 1 ]; then
     use_bundle=0
     if [ -z "${GITHUB_TOKEN:-}${GITCRYPT_KEY_B64:-}" ]; then
       a="$(ask "    Use your bootstrap passphrase to unlock the secrets bundle? [Y/n] (n = GitHub token + pasted key) ")"
@@ -217,6 +226,13 @@ else
         KEYFILE="$(mktemp)"; chmod 600 "$KEYFILE"; cp "$BUNDLE_DIR/gitcrypt.key" "$KEYFILE"
         ok "git-crypt key taken from the bundle (temp file, shredded after step 7)"; need_key=0
       fi
+      # Your GPG key (bundles made since 2026-11-20): this Pi then unlocks every repo like the laptop.
+      if [ "$need_gpg" -eq 1 ] && [ -s "$BUNDLE_DIR/gpg-secret.asc" ]; then
+        gpg --batch --quiet --import "$BUNDLE_DIR/gpg-secret.asc" 2>/dev/null
+        echo "$GPG_KEY:6:" | gpg --quiet --import-ownertrust 2>/dev/null
+        gpg --list-secret-keys "$GPG_KEY" >/dev/null 2>&1 && { ok "imported your GPG key (ultimate trust)"; need_gpg=0; }
+      fi
+      [ "$need_gpg" -eq 1 ] && warn "this bundle has no GPG key (made before 2026-11-20); re-run make-secrets.sh to add it"
     elif [ "$use_bundle" -eq 1 ]; then
       warn "falling back to GitHub token + pasted git-crypt key"
     fi
