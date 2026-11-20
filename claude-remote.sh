@@ -10,7 +10,8 @@
 #   1. installs Claude Code (Anthropic's native installer -> ~/.local/bin/claude, auto-updates itself)
 #   2. signs in to your claude.ai account (once: open the printed URL, approve, paste the code back).
 #      Remote Control needs a real claude.ai login; a `claude setup-token` token can't open it.
-#   3. creates the workspace folder sessions start in (default ~/claude) and accepts the
+#   3. creates the workspace folder sessions start in (default ~/claude), installs its CLAUDE.md
+#      (opi-CLAUDE.md: house rules for every session), and accepts the
 #      "Enable Remote Control?" and "Trust this folder?" first-run questions for it
 #   4. installs claude-remote.service: `claude remote-control` as this user, started at boot,
 #      restarted if it stops. The Pi then shows up in the Claude app -> Code tab.
@@ -86,6 +87,17 @@ fi
 # =========================================================================================
 step "3/5  Workspace and first-run questions"
 mkdir -p "$WORKDIR"; ok "workspace $WORKDIR"
+# House rules every session reads (opi-CLAUDE.md in this repo). Edits made on the Pi are kept as a backup.
+new_md="$(mktemp)"; fetch opi-CLAUDE.md "$new_md"
+if [ -f "$WORKDIR/CLAUDE.md" ] && cmp -s "$new_md" "$WORKDIR/CLAUDE.md"; then
+  ok "$WORKDIR/CLAUDE.md up to date"
+else
+  if [ -f "$WORKDIR/CLAUDE.md" ]; then
+    bak="$WORKDIR/CLAUDE.md.bak.$(date +%Y%m%d-%H%M%S)"; cp -p "$WORKDIR/CLAUDE.md" "$bak"; info "backed up the old one to $bak"
+  fi
+  install -m 0644 "$new_md" "$WORKDIR/CLAUDE.md"; ok "installed $WORKDIR/CLAUDE.md (house rules for sessions)"
+fi
+rm -f "$new_md"
 # The service has no terminal, so `claude remote-control` would exit with "Workspace not trusted".
 # Claude Code only accepts that answer from a person (a scripted "y" is rejected as too fast), so
 # the first time we run it in the foreground once and you answer the question yourself.

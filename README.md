@@ -126,6 +126,7 @@ claude.ai/code), and any session you start there runs *on the Pi*.
 | Sign-in | your claude.ai subscription, stored in `~/.claude/.credentials.json` (mode 600, never in this repo) |
 | Services | `claude-signin.service` (renewal, below) and `claude-remote.service`: `claude remote-control` as `pi`, started at boot, restarted 30 s after any exit |
 | Sessions start in | `~/claude` (`CLAUDE_WORKDIR`); Claude can still `cd` anywhere and use `sudo` |
+| House rules | [`opi-CLAUDE.md`](opi-CLAUDE.md) → `~/claude/CLAUDE.md`, read by every session: layout, git (pull first, push after each commit), secrets, what to ask before doing. Re-running replaces it (old copy kept as `CLAUDE.md.bak.<time>`) |
 | Permission mode | `auto` (`CLAUDE_PERMISSION_MODE`): a safety check approves routine actions and asks you on the phone for risky ones. Others: `default`, `acceptEdits`, `bypassPermissions` |
 
 **Why two questions can't be automated.** Remote Control needs a real claude.ai sign-in; the
