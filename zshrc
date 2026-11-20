@@ -13,6 +13,7 @@ PROMPT_EOL_MARK=""                  # no '%' at the end of output without a trai
 # (zsh shells only: sudo, cron and systemd use their own PATH; call those by full path.)
 typeset -U path                     # no duplicates when this file is re-sourced
 [ -d ~/docker/python-jobs/jobs ] && path+=(~/docker/python-jobs/jobs)
+[ -d ~/.local/bin ] && path=(~/.local/bin $path)   # claude (Claude Code's native installer puts it here)
 
 # ---- history ----------------------------------------------------------------
 HISTFILE=~/.zsh_history
