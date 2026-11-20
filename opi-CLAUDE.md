@@ -17,8 +17,7 @@ Lite 64-bit, user `pi` with passwordless sudo. Sessions usually come from the **
 | `~/claude/docker/python-jobs/jobs` | Scripts on PATH: `messenger` (Telegram), `ren`, `run`, ... |
 | systemd | `claude-remote` (this session's connection), `claude-signin` (renews its sign-in), `container-watchdog.timer` (alerts on broken containers) |
 
-`docker/CLAUDE.md` is partly a generic template: there is **no CI**, and the services are not separate
-projects with their own compose files or CLAUDE.md. Trust the compose file and READMEs over it.
+`docker/CLAUDE.md` describes the stack: services, how to apply each kind of change, and secrets.
 
 This Pi is set up by the public `pi-bootstrap` repo, which lives on the laptop, not here. Changes to
 how the Pi is installed belong there: tell me instead of editing system setup by hand.
