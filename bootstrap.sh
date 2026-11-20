@@ -45,10 +45,12 @@ DEPLOY_KEY="$HOME/.ssh/id_ed25519_github"
 GIT_NAME="Prithivirajasingh K"
 GIT_EMAIL="prithivirajasingh5@gmail.com"
 MEDIA_DIRS=(movies movies_archive Downloads)   # must match .env paths
+GPG_KEY=36495943FBDA0DF535B6FBA2E9A09FE2F41B0BFC   # your GPG key: git-crypt in all your repos (bundled in secrets.age)
 GITHUB_ED25519_FP="SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"  # github.com's published key
 PACKAGES=(git git-crypt docker.io docker-compose zsh zsh-syntax-highlighting zsh-autosuggestions curl ca-certificates
           nload iftop vnstat    # network: live graph / per-connection / live + daily-monthly history
-          smartmontools gh)     # SSD health for health-report; GitHub CLI
+          smartmontools gh      # SSD health for health-report; GitHub CLI
+          tcpdump)              # packet capture for network debugging
 SECRETS_URL="$BOOTSTRAP_RAW/secrets.age"
 CONFIG_TXT=/boot/firmware/config.txt; [ -f "$CONFIG_TXT" ] || CONFIG_TXT=/boot/config.txt   # older Pi OS
 
@@ -419,6 +421,24 @@ else
   ok "system log now kept on disk (/var/log/journal, max 500 MB / 2 months)"
 fi
 
+# Backup DNS: public resolvers first, the router (from DHCP) after them, 2 s timeout. On 2026-11-20 the
+# router's DNS stopped answering for 5 hours, which crashed Remote Control 188 times. A server that
+# times out is skipped; one that answers is believed, so the reliable ones go first.
+DNS_SERVERS="1.1.1.1 9.9.9.9"
+DNS_CHANGED=0
+nm_conn="$(nmcli -t -f NAME,DEVICE con show --active 2>/dev/null | awk -F: '$2=="eth0"{print $1; exit}')" || true
+if [ -z "$nm_conn" ]; then
+  warn "no active NetworkManager connection on eth0; backup DNS not set"
+elif [ "$(nmcli -g ipv4.dns con show "$nm_conn" | tr ',' ' ')" = "$DNS_SERVERS" ] \
+     && [ "$(nmcli -g ipv4.dns-options con show "$nm_conn" | tr -d '\\')" = "timeout:2" ]; then   # -g prints timeout\:2
+  ok "backup DNS already set ($DNS_SERVERS, then the router)"
+else
+  sudo nmcli con mod "$nm_conn" ipv4.dns "$DNS_SERVERS" ipv4.dns-options "timeout:2"
+  sudo nmcli device reapply eth0 >/dev/null    # applies without dropping the link (SSH stays up)
+  DNS_CHANGED=1
+  ok "backup DNS set on $nm_conn: $DNS_SERVERS, then the router (2 s timeout)"
+fi
+
 ZSH_BIN="$(command -v zsh)"
 if [ "$(getent passwd "$USER" | cut -d: -f7)" = "$ZSH_BIN" ]; then
   ok "login shell already zsh"
@@ -573,7 +593,8 @@ else
   # Also when the stack version changed: scripts are bind-mounted, so running containers would keep the
   # old code. --build rebuilds the local images (python-jobs, printmail) from the checked-out Dockerfile
   # (cached, so quick when nothing changed).
-  recreate=(); if [ "$DOCKER_LOGCFG_CHANGED" -eq 1 ] || [ "$STACK_CHANGED" -eq 1 ]; then recreate=(--force-recreate); fi
+  # Containers copy /etc/resolv.conf when created, so a DNS change also needs a recreate.
+  recreate=(); if [ "$DOCKER_LOGCFG_CHANGED" -eq 1 ] || [ "$STACK_CHANGED" -eq 1 ] || [ "$DNS_CHANGED" -eq 1 ]; then recreate=(--force-recreate); fi
   (cd "$STACK_DIR" && sudo docker compose up -d --build "${recreate[@]}") 2>&1 | { grep -vE ' (Pulling|Waiting|Downloading|Extracting|Verifying|Pull complete|Download complete|Already exists)' || true; } | tail -15
   info "waiting for health checks (up to 10 min; nginx may renew its certificate first)..."
   for _ in $(seq 1 60); do
