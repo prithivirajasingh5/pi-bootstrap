@@ -68,6 +68,8 @@ One-off debugging tools you remove afterwards are the only exception; say so if 
 The repo is git-crypt **unlocked** here, so `.env`, keys and certificates are plain text. Don't print
 or read whole secret files: to check a variable, test that it is set (`grep -c '^NAME=' .env`), not
 its value. Never paste secrets into replies or commit messages.
+If I say a secret leaked (the GitHub token, the `secrets.age` passphrase, or a lost Pi), follow
+"If a secret leaks" in `~/claude/pi-bootstrap/README.md`: deleting the token comes first.
 
 ## Safety
 - Ask first before: `docker compose down`, `down -v`, `docker volume rm`, `docker system prune`,

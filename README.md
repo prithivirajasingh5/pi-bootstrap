@@ -107,8 +107,36 @@ factor 2^18). Inside is a tar with these fixed names:
 - **Security:** the file is public, so its protection is the passphrase alone; a strong generated one is
   infeasible to brute-force. Anyone with the passphrase gets **write access to all your GitHub repos**
   (the token) **and your GPG key, which unlocks every repo** (it has no passphrase of its own). If it may
-  have leaked: revoke the token at https://github.com/settings/tokens, run `make-secrets.sh` (new token +
-  passphrase), and change the secrets inside your repos (git-crypt and GPG keys can't be revoked).
+  have leaked, see [If a secret leaks](#if-a-secret-leaks).
+
+## If a secret leaks
+
+The GitHub token never expires, so a leaked one stays usable until you delete it. Act first, investigate
+afterwards: deleting it costs nothing but a re-sign-in. Everything except `make-secrets.sh` works from the
+phone; that one needs a real terminal (laptop, or an SSH app), because only you may type the passphrase.
+
+**A. Only the token leaked** (pasted somewhere, in a screenshot, in a log):
+1. **Kill it now:** https://github.com/settings/tokens → `pi-bootstrap` → **Delete**. It stops working at
+   once. The Pis lose GitHub access (pull/push fail); the containers keep running.
+2. **Check for damage:** https://github.com/settings/security-log (anything you didn't do?), and in your
+   repos look for unknown commits, new deploy keys, webhooks or collaborators.
+3. **New token and bundle:** `./make-secrets.sh` (prefilled link for the new token, new passphrase into
+   Drive), then commit and push `secrets.age`.
+4. **Sign the Pis back in:** ask Claude on the Pi to run
+   `gh auth login --hostname github.com --git-protocol https --web`; it sends you a code to approve at
+   https://github.com/login/device. (Or re-run `bootstrap.sh` in a terminal: question 1 uses the new bundle.)
+
+**B. The passphrase leaked, or a Pi / its SSD was lost or stolen** (the disk holds the token, your GPG
+key and every unlocked `.env`; treat it all as leaked):
+1. Do A.1 and A.2 right away.
+2. **Change the secrets themselves** at each provider: everything in the repos' `.env` files (Cloudflare,
+   Telegram bot, VPN, mail, ...) and the WireGuard keys. Old commits stay decryptable with the old keys,
+   so new values are the only real fix.
+3. **Replace the GPG key** (it can't be revoked inside git-crypt): make a new one, add it to every repo
+   with `git-crypt add-gpg-user`, and update its fingerprint in `make-secrets.sh`, `bootstrap.sh`,
+   `opi-claude/gpg-public.asc` and your CLAUDE.md files. Then do A.3 and A.4.
+4. **Lost Pi only:** in your claude.ai account settings, end the Pi's sessions (or change the password),
+   and remove its public key from `authorized_keys` on any machine it could SSH into.
 
 ## After it finishes
 
