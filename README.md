@@ -119,8 +119,15 @@ phone; that one needs a real terminal (laptop, or an SSH app), because only you 
 1. **Kill it now:** https://github.com/settings/tokens → `pi-bootstrap` → **Delete**. It stops working at
    once. A Pi signed in with it loses GitHub access (pull/push fail); the containers keep running.
 2. **Check for damage:** https://github.com/settings/security-log (anything you didn't do?), and in your
-   repos look for unknown commits, new deploy keys, webhooks or collaborators. Claude on the Pi can list
-   them: *"check all my repos for deploy keys, webhooks and collaborators I didn't add"*.
+   repos look for unknown commits, new deploy keys, webhooks or collaborators. This lists the last three
+   for every repo and prints only what it finds (nothing = clean):
+   ```bash
+   for r in $(gh repo list --limit 200 --json nameWithOwner -q '.[].nameWithOwner'); do
+     k=$(gh repo deploy-key list -R "$r"); h=$(gh api "repos/$r/hooks" -q '.[].config.url')
+     c=$(gh api "repos/$r/collaborators" -q '.[].login' | grep -vx prithivirajasingh5)
+     [ -n "$k$h$c" ] && printf '== %s\n%s\n%s\n%s\n' "$r" "$k" "$h" "$c"; done; echo "scan done"
+   ```
+   Recent pushes: `gh api users/prithivirajasingh5/events -q '.[] | select(.type=="PushEvent") | .created_at+" "+.repo.name'`.
 3. **New token and bundle**, in a real terminal (laptop, or an SSH app on the phone: `ssh pi@opi` first):
    ```bash
    cd ~/claude/pi-bootstrap && git pull --ff-only
@@ -147,11 +154,34 @@ key and every unlocked `.env`; treat it all as leaked):
 1. Do A.1 and A.2 right away. A Pi signed in with the phone code (not the bundle) has its own token:
    also revoke **GitHub CLI** at https://github.com/settings/applications (every `gh` sign-in on every
    machine ends; sign the others back in with A.4).
-2. **Change the secrets themselves** at each provider: everything in the repos' `.env` files (Cloudflare,
-   Telegram bot, VPN, mail, ...) and the WireGuard keys. Old commits stay decryptable with the old keys,
+2. **Change the secrets themselves** at each provider. Old commits stay decryptable with the old keys,
    so new values are the only real fix. List what to change without showing values:
    ```bash
    for f in ~/claude/*/.env; do echo "== $f"; cut -d= -f1 "$f" | grep -v '^#'; done
+   ```
+   | `.env` variable | Where to get a new value |
+   |---|---|
+   | `CLOUDFLARE_API_TOKEN` | https://dash.cloudflare.com/profile/api-tokens → the token → **Roll** |
+   | `*_TELEGRAM_BOT_TOKEN`, `MESSENGER_DEFAULT_TOKEN` | Telegram, chat with https://t.me/BotFather → `/revoke` → pick the bot |
+   | `PRINTMAIL_GMAIL_APP_PASSWORD` | https://myaccount.google.com/apppasswords: delete the old one, create a new one |
+   | `PROTONVPN_USERNAME` / `_PASSWORD` | https://account.protonvpn.com → Account → OpenVPN / IKEv2 credentials → reset |
+   | `PCLOUD_PASS` | https://my.pcloud.com → Settings → change password |
+   | `FRONTIER_PASSWORD` (gowild-checking) | https://www.flyfrontier.com → My account → change password |
+   | `JELLYFIN_API` | your Jellyfin → Dashboard → API Keys: delete, create |
+   | `*_QBIT_PASSWORD`, `USER_PASS`, `PRINTMAIL_PASSPHRASE`, `TELEGRAM_PDF_PASSWORDS` | your own choice: set it in the app (qBittorrent: Options → Web UI) and in `.env` |
+   | `RESTIC_PASSWORD` | `restic key add`, then `restic key remove <old key id>` (`restic key list`) |
+
+   Then put the new values in each `.env` (Claude on the Pi can edit it without showing them) and apply:
+   ```bash
+   cd ~/claude/docker && docker compose up -d --force-recreate
+   git add .env && git commit -m "Rotate secrets" && git push
+   ```
+   **WireGuard keys** (server and every phone/laptop peer): new ones mean re-scanning every QR code.
+   ```bash
+   cd ~/claude/docker && docker compose stop wireguard
+   sudo rm -rf wireguard/config/server wireguard/config/peer_*     # deletes the old keys
+   docker compose up -d wireguard && docker exec wireguard /app/show-peer prip   # QR per peer
+   git add -A wireguard/config && git commit -m "Rotate WireGuard keys" && git push
    ```
 3. **Replace the GPG key** (it can't be revoked inside git-crypt), on the laptop:
    ```bash
@@ -162,8 +192,8 @@ key and every unlocked `.env`; treat it all as leaked):
    ```
    Put the new fingerprint into every file the last command lists, back up the new secret key in Drive
    (`gpg --export-secret-keys --armor <NEW_FINGERPRINT>`), then do A.3 and A.4.
-4. **Lost Pi only:** in your claude.ai account settings, end the Pi's sessions (or change the password),
-   and remove its public key from `authorized_keys` on any machine it could SSH into.
+4. **Lost Pi only:** https://claude.ai/settings → Account → **Log out of all devices** (then sign the
+   laptop and the new Pi back in). The Pi has no SSH key of its own, so nothing else trusts it.
 
 ## After it finishes
 
