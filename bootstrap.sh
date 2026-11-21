@@ -8,7 +8,7 @@
 #   --no-stack   only shell setup, folders and Wi-Fi/Bluetooth choices (no GitHub, clone, unlock or docker start)
 #   --no-start   do everything except `docker compose up -d`
 #   --check-secrets  only test the published secrets.age: decrypt it with your passphrase, prove the
-#                    bundled deploy key works on GitHub and the git-crypt key matches ~/claude/docker (changes nothing)
+#                    bundled GitHub token works and the git-crypt and GPG keys are right (changes nothing)
 #   -h, --help
 #
 # Flow: sudo setup -> five questions (1/5 GitHub, 2/5 Wi-Fi chip, 3/5 Bluetooth chip, 4/5 stack version,
@@ -18,11 +18,11 @@
 # except what git-crypt itself keeps in ~/claude/docker/.git/git-crypt/keys/.
 #
 # Question 1/5 normally needs only your bootstrap passphrase: it decrypts secrets.age (made by
-# make-secrets.sh) holding a shared deploy key, the git-crypt key and your GPG key. Fallback: GitHub
-# token + pasted key (no GPG key then).
+# make-secrets.sh) holding a GitHub token, the docker repo's git-crypt key and your GPG key, so no
+# GitHub code is needed. Fallback: a GitHub code approved on your phone + pasted git-crypt key.
 #
 # Optional non-interactive inputs (avoid on shared machines: env vars can leak via `ps`):
-#   GITHUB_TOKEN       token used once to register the Pi's deploy key
+#   GITHUB_TOKEN       GitHub token for gh to sign in with (instead of the bundle's)
 #   GITCRYPT_KEY_B64   base64 of `git-crypt export-key -` for the docker repo
 #   DISABLE_WIFI       yes/no — answer question 2/5
 #   DISABLE_BT         yes/no — answer question 3/5
@@ -35,19 +35,17 @@ set -Eeuo pipefail
 
 REPO_OWNER="prithivirajasingh5"
 REPO_NAME="docker"
-REPO_SSH="git@github.com:${REPO_OWNER}/${REPO_NAME}.git"
+REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"   # gh supplies the credentials
 BOOTSTRAP_RAW="https://raw.githubusercontent.com/${REPO_OWNER}/pi-bootstrap/main"
 STACK_DIR="${STACK_DIR:-$HOME/claude/docker}"
 OLD_STACK_DIR="$HOME/docker"   # where the stack lived before 2026-11-20; step 6 moves it
 # The questions run before step 6, so they look at wherever the checkout is right now.
 CUR_STACK_DIR="$STACK_DIR"
 if [ ! -d "$STACK_DIR/.git" ] && [ -d "$OLD_STACK_DIR/.git" ]; then CUR_STACK_DIR="$OLD_STACK_DIR"; fi
-DEPLOY_KEY="$HOME/.ssh/id_ed25519_github"
 GIT_NAME="Prithivirajasingh K"
 GIT_EMAIL="prithivirajasingh5@gmail.com"
 MEDIA_DIRS=(movies movies_archive Downloads)   # must match .env paths
 GPG_KEY=36495943FBDA0DF535B6FBA2E9A09FE2F41B0BFC   # your GPG key: git-crypt in all your repos (bundled in secrets.age)
-GITHUB_ED25519_FP="SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"  # github.com's published key
 PACKAGES=(git git-crypt docker.io docker-compose zsh zsh-syntax-highlighting zsh-autosuggestions curl ca-certificates
           nload iftop vnstat    # network: live graph / per-connection / live + daily-monthly history
           smartmontools gh      # SSD health for health-report; GitHub CLI
@@ -102,11 +100,12 @@ fetch() {  # fetch <name> <dest>
   if [ -n "$SCRIPT_DIR" ]; then cp "$SCRIPT_DIR/$1" "$2"; else curl -fsSL "$BOOTSTRAP_RAW/$1" -o "$2"; fi
 }
 
-# `ssh -T git@github.com` always exits 1 (GitHub refuses a shell), so with pipefail a direct
-# `ssh ... | grep -q` would always look like failure. Capture the greeting, then test it.
-# -n: ssh must not read stdin, or it swallows anything typed ahead for the next prompt.
-github_greeting() { ssh -n -T -o BatchMode=yes git@github.com 2>&1 || true; }
-github_ok() { local g; g="$(github_greeting)"; [[ "$g" == *"successfully authenticated"* ]]; }
+# gh_token_login < token: sign gh in with a token on stdin; git then uses gh for https://github.com.
+gh_token_login() {
+  gh auth login --hostname github.com --with-token >/dev/null 2>&1 || return 1
+  gh config set -h github.com git_protocol https
+  gh auth status >/dev/null 2>&1
+}
 is_locked() { [ "$(head -c 9 "${1:-$STACK_DIR}/.env" 2>/dev/null | tail -c 8)" = "GITCRYPT" ]; }   # [dir]
 overlay_set() { grep -qx "dtoverlay=$1" "$CONFIG_TXT"; }
 
@@ -121,18 +120,12 @@ open_bundle() {
     info "enter your bootstrap passphrase (Google Drive -> Confidential); input is hidden"
     if age -d -o "$BUNDLE_DIR/bundle.tar" "$BUNDLE_DIR/secrets.age" </dev/tty; then
       tar -C "$BUNDLE_DIR" -xf "$BUNDLE_DIR/bundle.tar" && rm -f "$BUNDLE_DIR/bundle.tar"
-      [ -s "$BUNDLE_DIR/deploy_key" ] && [ -s "$BUNDLE_DIR/gitcrypt.key" ] || { warn "bundle is missing files"; return 1; }
+      [ -s "$BUNDLE_DIR/gitcrypt.key" ] || { warn "bundle is missing gitcrypt.key"; return 1; }
       ok "bundle decrypted"; return 0
     fi
     warn "could not decrypt (wrong passphrase?) — attempt $attempt/3"
   done
   return 1
-}
-# Does a given private key authenticate to GitHub? (Isolated from ~/.ssh/config and any agent.)
-key_works() {
-  local g
-  g="$(ssh -n -T -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -i "$1" git@github.com 2>&1 || true)"
-  [[ "$g" == *"successfully authenticated"* ]]
 }
 
 # =========================================================================================
@@ -160,10 +153,17 @@ fi
 
 if [ "$CHECK_SECRETS" -eq 1 ]; then
   step "Check secrets.age (read-only)"
-  [ -f "$HOME/.ssh/known_hosts" ] && ssh-keygen -F github.com >/dev/null 2>&1 || die "github.com is not in ~/.ssh/known_hosts yet; run the normal bootstrap first"
+  command -v gh >/dev/null || die "gh is not installed; run the normal bootstrap first"
   open_bundle || die "could not open the bundle"
-  if key_works "$BUNDLE_DIR/deploy_key"; then ok "bundled deploy key authenticates to GitHub ($(ssh-keygen -lf "$BUNDLE_DIR/deploy_key.pub" | awk '{print $2}'))"
-  else die "bundled deploy key is NOT accepted by GitHub (revoked?) — re-run make-secrets.sh"; fi
+  if [ -s "$BUNDLE_DIR/github-token" ]; then
+    login="$(GH_TOKEN="$(cat "$BUNDLE_DIR/github-token")" gh api user --jq .login 2>/dev/null)" \
+      || die "the bundled GitHub token is NOT accepted (revoked or expired?) — re-run make-secrets.sh with a new one"
+    scopes="$(GH_TOKEN="$(cat "$BUNDLE_DIR/github-token")" gh api -i user 2>/dev/null | tr -d '\r' | awk -F': ' 'tolower($1)=="x-oauth-scopes"{print $2}')"
+    for need in repo workflow; do [[ ", $scopes," == *", $need,"* ]] || die "the bundled GitHub token lacks the '$need' scope (has: $scopes)"; done
+    ok "bundled GitHub token works for $login (scopes: $scopes)"
+  else
+    warn "bundle has no GitHub token yet (made before 2026-11-20): new Pis get a code to approve instead"
+  fi
   if [ -f "$CUR_STACK_DIR/.git/git-crypt/keys/default" ]; then
     cmp -s "$BUNDLE_DIR/gitcrypt.key" "$CUR_STACK_DIR/.git/git-crypt/keys/default" \
       && ok "bundled git-crypt key is identical to the key $CUR_STACK_DIR uses" \
@@ -188,45 +188,36 @@ ques "Question 1/5  GitHub access and secrets"
 if [ "$DO_STACK" -eq 0 ]; then
   ok "not needed (--no-stack)"
 else
-  # Deploy key, used only for github.com, and github.com's host key (checked against the published one).
-  mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
-  [ -f "$DEPLOY_KEY" ] || { ssh-keygen -q -t ed25519 -N "" -C "$(hostname) ${REPO_NAME} deploy key" -f "$DEPLOY_KEY"; info "created deploy key $DEPLOY_KEY"; }
-  touch "$HOME/.ssh/config"; chmod 600 "$HOME/.ssh/config"
-  grep -q '^Host github.com' "$HOME/.ssh/config" || \
-    printf 'Host github.com\n    User git\n    IdentityFile %s\n    IdentitiesOnly yes\n' "$DEPLOY_KEY" >>"$HOME/.ssh/config"
-  if ! ssh-keygen -F github.com >/dev/null 2>&1; then
-    hk="$(mktemp)"; ssh-keyscan -t ed25519 github.com 2>/dev/null >"$hk"
-    fp="$(ssh-keygen -lf "$hk" | awk '{print $2}')"
-    [ "$fp" = "$GITHUB_ED25519_FP" ] || { rm -f "$hk"; die "github.com host key fingerprint $fp does not match the published $GITHUB_ED25519_FP"; }
-    cat "$hk" >>"$HOME/.ssh/known_hosts"; rm -f "$hk"; info "trusted github.com ($fp, matches GitHub's published key)"
-  fi
+  # gh signs in to GitHub; git then uses it for every https://github.com repo. Questions run before
+  # the package step, so install it now if needed (like age).
+  command -v gh >/dev/null || { info "installing gh (GitHub CLI)"; sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -qq gh >/dev/null; }
 
-  need_github=0; github_ok || need_github=1
+  need_github=0; gh auth status >/dev/null 2>&1 || need_github=1
   need_key=0; { [ -d "$CUR_STACK_DIR/.git" ] && ! is_locked "$CUR_STACK_DIR"; } || need_key=1
-  [ "$need_github" -eq 0 ] && { g="$(github_greeting)"; g="${g#*Hi }"; ok "GitHub already accepts this Pi's key: Hi ${g%%!*}"; }
-  [ "$need_key" -eq 0 ] && ok "$CUR_STACK_DIR is already unlocked; no git-crypt key needed"
   need_gpg=0; gpg --list-secret-keys "$GPG_KEY" >/dev/null 2>&1 || need_gpg=1
+  [ "$need_github" -eq 0 ] && ok "GitHub: gh signed in as $(gh api user --jq .login 2>/dev/null)"
+  [ "$need_key" -eq 0 ] && ok "$CUR_STACK_DIR is already unlocked; no git-crypt key needed"
   [ "$need_gpg" -eq 0 ] && ok "your GPG key is already here (unlocks all your git-crypt repos)"
 
-  # Preferred: one passphrase opens secrets.age (shared deploy key + git-crypt key).
+  # Preferred: one passphrase opens secrets.age (GitHub token, git-crypt key, GPG key).
   if [ "$need_github" -eq 1 ] || [ "$need_key" -eq 1 ] || [ "$need_gpg" -eq 1 ]; then
     use_bundle=0
     if [ -z "${GITHUB_TOKEN:-}${GITCRYPT_KEY_B64:-}" ]; then
-      a="$(ask "    Use your bootstrap passphrase to unlock the secrets bundle? [Y/n] (n = GitHub token + pasted key) ")"
+      a="$(ask "    Use your bootstrap passphrase to unlock the secrets bundle? [Y/n] (n = GitHub code on your phone + pasted key) ")"
       [[ "${a,,}" =~ ^(n|no)$ ]] || use_bundle=1
     fi
     if [ "$use_bundle" -eq 1 ] && open_bundle; then
-      if [ "$need_github" -eq 1 ]; then
-        if [ -f "$DEPLOY_KEY" ]; then mv "$DEPLOY_KEY" "$DEPLOY_KEY.bak.$(date +%s)"; mv "$DEPLOY_KEY.pub" "$DEPLOY_KEY.pub.bak.$(date +%s)" 2>/dev/null || true; info "backed up the existing (unregistered) deploy key"; fi
-        install -m 600 "$BUNDLE_DIR/deploy_key" "$DEPLOY_KEY"; install -m 644 "$BUNDLE_DIR/deploy_key.pub" "$DEPLOY_KEY.pub"
-        github_ok || die "the bundled deploy key is not accepted by GitHub (revoked? re-run make-secrets.sh)"
-        ok "installed the shared deploy key from the bundle; GitHub accepts it"; need_github=0
+      if [ "$need_github" -eq 1 ] && [ -s "$BUNDLE_DIR/github-token" ]; then
+        gh_token_login < "$BUNDLE_DIR/github-token" && { ok "gh signed in with the bundled token as $(gh api user --jq .login)"; need_github=0; }
+        [ "$need_github" -eq 1 ] && warn "the bundled GitHub token was refused (revoked or expired?): re-run make-secrets.sh with a new one"
+      elif [ "$need_github" -eq 1 ]; then
+        warn "this bundle has no GitHub token (made before 2026-11-20); using a code instead"
       fi
       if [ "$need_key" -eq 1 ]; then
         KEYFILE="$(mktemp)"; chmod 600 "$KEYFILE"; cp "$BUNDLE_DIR/gitcrypt.key" "$KEYFILE"
         ok "git-crypt key taken from the bundle (temp file, shredded after step 7)"; need_key=0
       fi
-      # Your GPG key (bundles made since 2026-11-20): this Pi then unlocks every repo like the laptop.
+      # Your GPG key: this Pi then unlocks every repo like the laptop.
       if [ "$need_gpg" -eq 1 ] && [ -s "$BUNDLE_DIR/gpg-secret.asc" ]; then
         gpg --batch --quiet --import "$BUNDLE_DIR/gpg-secret.asc" 2>/dev/null
         echo "$GPG_KEY:6:" | gpg --quiet --import-ownertrust 2>/dev/null
@@ -234,50 +225,21 @@ else
       fi
       [ "$need_gpg" -eq 1 ] && warn "this bundle has no GPG key (made before 2026-11-20); re-run make-secrets.sh to add it"
     elif [ "$use_bundle" -eq 1 ]; then
-      warn "falling back to GitHub token + pasted git-crypt key"
+      warn "falling back to a GitHub code + pasted git-crypt key"
     fi
   fi
 
-  # Fallback (a): GitHub token -> register this Pi's own deploy key now, then forget the token.
-  if [ "$need_github" -eq 1 ]; then
-    pub="$(cat "$DEPLOY_KEY.pub")"
-    token="${GITHUB_TOKEN:-}"
-    if [ -z "$token" ]; then
-      info "This Pi's key is not on GitHub yet. A token lets me add it as a deploy key on ${REPO_OWNER}/${REPO_NAME}."
-      info "Create one at https://github.com/settings/personal-access-tokens/new"
-      info "  Repository access: Only select repositories -> ${REPO_NAME};  Permissions: Administration = Read and write"
-      info "  (a short expiry like 1 day is fine; it is used once and never stored)"
-      token="$(ask_secret "    GitHub token (hidden; press Enter to add the key by hand instead): ")"
-    fi
-    if [ -n "$token" ]; then
-      api="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/keys"
-      hdr=(-H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
-      body="$(printf '{"title":"%s %s","key":"%s","read_only":false}' "$(hostname)" "$(date +%F)" "$pub")"
-      resp="$(curl -sS -w '\n%{http_code}' -X POST "${hdr[@]}" "$api" -d "$body")" || true
-      code="${resp##*$'\n'}"
-      case "$code" in
-        201) ok "deploy key added (read-write)" ;;
-        422) warn "GitHub says this key is already registered; continuing" ;;
-        401|403|404) unset token hdr; die "GitHub rejected the token (HTTP $code). It needs Administration: Read and write on ${REPO_NAME}." ;;
-        *) unset token hdr; die "unexpected response from GitHub (HTTP $code): ${resp%$'\n'*}" ;;
-      esac
-      # Show all deploy keys so stale ones (e.g. a dead Pi) can be removed.
-      others="$(curl -sS "${hdr[@]}" "$api" | grep -oE '"(id|title)": ?("[^"]*"|[0-9]+)' | paste - - | sed -E 's/"id": ?([0-9]+)\t"title": ?"([^"]*)"/\1  \2/')" || true
-      unset token hdr
-      if [ -n "$others" ]; then
-        info "deploy keys now on ${REPO_NAME} (delete stale ones in GitHub -> ${REPO_NAME} -> Settings -> Deploy keys):"
-        printf '%s\n' "$others" | sed 's/^/        /'
-      fi
-    else
-      info "Add this key at https://github.com/${REPO_OWNER}/${REPO_NAME}/settings/keys/new"
-      info "  Title: $(hostname)   Tick: Allow write access"
-      printf '\n%s\n\n' "$pub"
-      ask "    Press Enter once it is added... " >/dev/null
-    fi
-    for _ in 1 2 3 4 5; do github_ok && break; sleep 3; done
-    github_ok || die "GitHub still does not accept this Pi's key. Check the deploy key and re-run."
-    ok "GitHub accepts this Pi's key"
+  # Fallback (a): GITHUB_TOKEN from the environment, else a device code approved on your phone.
+  if [ "$need_github" -eq 1 ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+    printf '%s' "$GITHUB_TOKEN" | gh_token_login && need_github=0 && ok "gh signed in with GITHUB_TOKEN"
   fi
+  if [ "$need_github" -eq 1 ]; then
+    info "Open https://github.com/login/device on your phone and enter the code shown below."
+    gh auth login --hostname github.com --git-protocol https --web --scopes workflow </dev/tty >/dev/tty 2>&1
+    gh auth status >/dev/null 2>&1 || die "gh is not signed in to GitHub; re-run to try again"
+    ok "gh signed in as $(gh api user --jq .login)"
+  fi
+  gh auth setup-git
 
   # Fallback (b): git-crypt key pasted as base64 -> validated now, used in step 7.
   if [ "$need_key" -eq 1 ]; then
@@ -330,7 +292,7 @@ if [ "$DO_STACK" -eq 0 ]; then
   ok "not needed (--no-stack)"; STACK_REF=main
 else
   # One query lists main and every release; "^{}" lines give the commit an annotated tag points to.
-  refs="$(git ls-remote "$REPO_SSH" refs/heads/main 'refs/tags/stable-v*' </dev/null)" \
+  refs="$(git ls-remote "$REPO_URL" refs/heads/main 'refs/tags/stable-v*' </dev/null)" \
     || die "could not list ${REPO_NAME}'s versions on GitHub"
   main_sha="$(awk '$2 == "refs/heads/main" {print substr($1, 1, 7)}' <<< "$refs")"
   [ -n "$main_sha" ] || die "${REPO_NAME} has no main branch on GitHub"
@@ -538,6 +500,11 @@ if [ "$STACK_DIR" != "$OLD_STACK_DIR" ] && [ -d "$OLD_STACK_DIR/.git" ]; then
   ok "moved to $STACK_DIR"
 fi
 
+# Checkouts made before 2026-11-20 used an SSH deploy key; gh's HTTPS login replaces it.
+if [ -d "$STACK_DIR/.git" ] && [[ "$(git -C "$STACK_DIR" remote get-url origin)" == git@github.com:* ]]; then
+  git -C "$STACK_DIR" remote set-url origin "$REPO_URL"; ok "switched $STACK_DIR's remote to HTTPS (gh)"
+fi
+
 switch_stack() {
   local g=(git -C "$STACK_DIR")
   if [ "$STACK_REF" = main ]; then
@@ -582,7 +549,7 @@ if [ -d "$STACK_DIR/.git" ]; then
     if [ "$stashed" -eq 1 ] && [ -z "${conflicted:-}" ]; then ok "kept the apps' own config changes"; fi
   fi
 else
-  git clone -q "$REPO_SSH" "$STACK_DIR" </dev/null
+  git clone -q "$REPO_URL" "$STACK_DIR" </dev/null
   [ "$STACK_REF" = main ] || git -C "$STACK_DIR" checkout -q --detach "refs/tags/$STACK_REF"
   ok "cloned into $STACK_DIR at $STACK_REF ($(git -C "$STACK_DIR" log --oneline -1))"
 fi
