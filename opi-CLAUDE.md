@@ -39,6 +39,12 @@ the Pi is installed (packages, services, timers, this file) belong there: change
 relevant script here to test (`bash ~/claude/pi-bootstrap/claude-remote.sh`, or `bootstrap.sh`), then
 commit and push. Don't hand-edit system setup that pi-bootstrap would overwrite.
 
+**Docker first.** New services, jobs and tools go into the docker stack (`~/claude/docker`, usually a
+`python-jobs` container) instead of being installed on the host: a fresh Pi then only needs
+pi-bootstrap + `docker compose up -d`, and containers move to other machines/architectures easily.
+Install on the host only what can't live in a container (Docker itself, Claude Code, systemd units
+that manage the host); those follow the interrupt rule below.
+
 **Interrupt rule: everything you install or set up here goes into pi-bootstrap, in the same task.**
 A fresh Pi must end up identical by running pi-bootstrap alone. So whenever you install a package
 (`apt`, `pip`, `npm`, a binary), add a systemd service or timer, or change system config (`/etc/...`,

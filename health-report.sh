@@ -114,6 +114,10 @@ for name, n in c.most_common(10): print(f"{n:7} {name}")'
   grep -E '^(nameserver|search)' /etc/resolv.conf
   echo "link changes:"; journalctl --since "$SINCE" --no-pager -q -o cat | grep -iE 'eth0.*(link is (up|down)|carrier)|NIC Link is' | top 5
 
+  sec "Home router and network (netwatch)"
+  # written hourly by the netwatch container (docker repo: python-jobs/jobs/netwatch.py)
+  cat "$STACK_DIR/shared/netwatch/summary.txt" 2>/dev/null || echo "no netwatch summary (container not running?)"
+
   sec "Updates"
   sudo -n apt-get update -qq >/dev/null 2>&1
   echo "packages waiting for an update: $(apt list --upgradable 2>/dev/null | tail -n +2 | wc -l)"
