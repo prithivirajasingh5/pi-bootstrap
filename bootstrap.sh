@@ -15,7 +15,8 @@
 #       5/5 Claude Code) -> the rest
 # runs unattended. Safe to re-run: every step checks first and skips what is already done.
 # Secrets are only ever typed at hidden prompts; nothing secret is stored by this script
-# except what git-crypt itself keeps in ~/claude/docker/.git/git-crypt/keys/.
+# except what git-crypt itself keeps in ~/claude/docker/.git/git-crypt/keys/ and the router SSH key
+# (~/.ssh/netblock_router, copied from the unlocked .env after step 7).
 #
 # Question 1/5 normally needs only your bootstrap passphrase: it decrypts secrets.age (made by
 # make-secrets.sh) holding a GitHub token, the docker repo's git-crypt key and your GPG key, so no
@@ -565,6 +566,60 @@ else
   ok "unlocked (.env readable; key kept only in $STACK_DIR/.git/git-crypt/keys/)"
 fi
 cleanup
+
+# Router SSH for typing `ssh router` on the Pi. The Telegram bot's netblock feature reads its key and
+# the router's pinned host key straight from .env; these files are the same two values for hand use.
+# dropbear 2019.78 on the DD-WRT router only checks the old SHA-1 "ssh-rsa" signature, hence
+# PubkeyAcceptedAlgorithms. Releases older than netblock have no NETBLOCK_* and are skipped.
+env_get() { { grep -m1 "^$1=" "$STACK_DIR/.env" 2>/dev/null || true; } | cut -d= -f2-; }
+nb_key="$(env_get NETBLOCK_SSH_KEY_B64)"; nb_hostkey="$(env_get NETBLOCK_ROUTER_HOSTKEY)"
+nb_target="$(env_get NETBLOCK_ROUTER)"; nb_target="${nb_target:-root@192.168.1.1}"
+if [ -z "$nb_key" ] || [ -z "$nb_hostkey" ] || is_locked; then
+  info "router SSH: skipped (no NETBLOCK_* in $STACK_DIR/.env)"
+else
+  install -d -m 700 "$HOME/.ssh"
+  nb_changed=()
+  nb_tmp="$(mktemp)"
+  printf '%s' "$nb_key" | base64 -d > "$nb_tmp" 2>/dev/null && ssh-keygen -y -f "$nb_tmp" >/dev/null 2>&1 \
+    || { rm -f "$nb_tmp"; die "NETBLOCK_SSH_KEY_B64 in $STACK_DIR/.env is not a valid private key"; }
+  if ! cmp -s "$nb_tmp" "$HOME/.ssh/netblock_router"; then
+    install -m 600 "$nb_tmp" "$HOME/.ssh/netblock_router"; nb_changed+=(key)
+  fi
+  ssh-keygen -y -f "$HOME/.ssh/netblock_router" | cut -d' ' -f1-2 | sed 's/$/ opi-netblock/' > "$nb_tmp"
+  if [ "$(cut -d' ' -f1-2 "$HOME/.ssh/netblock_router.pub" 2>/dev/null)" != "$(cut -d' ' -f1-2 "$nb_tmp")" ]; then
+    install -m 644 "$nb_tmp" "$HOME/.ssh/netblock_router.pub"; nb_changed+=(public-key)
+  fi
+  if [ "$(cat "$HOME/.ssh/netblock_known_hosts" 2>/dev/null)" != "$nb_hostkey" ]; then
+    printf '%s\n' "$nb_hostkey" > "$HOME/.ssh/netblock_known_hosts"; chmod 644 "$HOME/.ssh/netblock_known_hosts"
+    nb_changed+=(known_hosts)
+  fi
+  # Our own block in ~/.ssh/config between markers; anything else in the file is left alone.
+  nb_begin="# >>> pi-bootstrap: router (netblock) >>>"; nb_end="# <<< pi-bootstrap: router (netblock) <<<"
+  nb_block="$nb_begin
+Host router
+    HostName ${nb_target#*@}
+    User ${nb_target%@*}
+    IdentityFile ~/.ssh/netblock_router
+    IdentitiesOnly yes
+    PubkeyAcceptedAlgorithms ssh-rsa
+    UserKnownHostsFile ~/.ssh/netblock_known_hosts
+    StrictHostKeyChecking yes
+$nb_end"
+  touch "$HOME/.ssh/config"; chmod 600 "$HOME/.ssh/config"
+  nb_rest="$(awk -v b="$nb_begin" -v e="$nb_end" '$0==b{skip=1;next} $0==e{skip=0;next} !skip' "$HOME/.ssh/config")"
+  nb_new="$(printf '%s%s%s\n' "$nb_rest" "${nb_rest:+$'\n\n'}" "$nb_block")"
+  if [ "$(cat "$HOME/.ssh/config")" != "$nb_new" ]; then
+    printf '%s\n' "$nb_new" > "$HOME/.ssh/config"; nb_changed+=(config)
+  fi
+  rm -f "$nb_tmp"
+  if [ ${#nb_changed[@]} -eq 0 ]; then ok "router SSH files already up to date"
+  else ok "router SSH: wrote ${nb_changed[*]} (~/.ssh/netblock_*, 'Host router' in ~/.ssh/config)"; fi
+  if ssh -n -o BatchMode=yes -o ConnectTimeout=5 router true 2>/dev/null; then
+    ok "ssh router works"
+  else
+    warn "ssh router failed: is the router up, and is ~/.ssh/netblock_router.pub in DD-WRT (Services -> Secure Shell -> Authorized Keys)?"
+  fi
+fi
 
 # =========================================================================================
 step "Step 8/8  Start the stack"
