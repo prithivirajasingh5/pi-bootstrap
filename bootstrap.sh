@@ -31,6 +31,7 @@
 #   CLAUDE_REMOTE      yes/no — answer question 5/5 (claude-remote.sh also reads CLAUDE_WORKDIR,
 #                      CLAUDE_PERMISSION_MODE, CLAUDE_RC_NAME)
 #   STACK_DIR          where to clone the repo (default ~/claude/docker, like the laptop)
+#   RUN_TESTS          no — skip running the stack's tests after it starts (default: run them)
 # =============================================================================
 set -Eeuo pipefail
 
@@ -641,6 +642,23 @@ else
     sleep 10
   done
   sudo docker compose -f "$STACK_DIR/docker-compose.yml" ps --format 'table {{.Service}}\t{{.Status}}'
+
+  # The stack's test suite, run by the docker repo's python-jobs/run-tests inside the printmail image
+  # (built just above): the host has no pikepdf/CUPS/LibreOffice on purpose, so plain python3 can't run
+  # them here. Proves the checked-out code works on this Pi. A failure is reported, not fatal.
+  if [ "${RUN_TESTS:-yes}" = no ]; then
+    info "tests skipped (RUN_TESTS=no)"
+  elif [ ! -x "$STACK_DIR/python-jobs/run-tests" ]; then
+    info "tests: this stack version has no python-jobs/run-tests (older release)"
+  else
+    info "running the stack's tests in the printmail image (1-2 min)..."
+    if t_out="$(DOCKER="sudo docker" "$STACK_DIR/python-jobs/run-tests" 2>&1)"; then
+      ok "tests passed: $(grep -E '^Ran ' <<<"$t_out" || echo 'see python-jobs/run-tests')"
+    else
+      warn "tests FAILED: $(grep -E '^(Ran |FAILED)' <<<"$t_out" | tr '\n' ' ') (re-run: $STACK_DIR/python-jobs/run-tests)"
+      printf '%s\n' "$t_out" | tail -25 | sed 's/^/      /'
+    fi
+  fi
 fi
 
 # Custom scripts (messenger, ren, run, ...) are on PATH via ~/.zshrc (python-jobs/jobs folder).

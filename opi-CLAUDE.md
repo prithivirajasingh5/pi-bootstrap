@@ -27,6 +27,13 @@ Only physical work (flashing an SSD, plugging cables) needs anything but the pho
 
 `docker/CLAUDE.md` describes the stack: services, how to apply each kind of change, and secrets.
 
+**Tests run in the images, never on the host.** Run the stack's tests with
+`~/claude/docker/python-jobs/run-tests` (inside the `printmail` image; nothing skipped there). Plain
+`python3 -m unittest` here fails to import three test modules (no `pikepdf`): that is expected. Don't
+fix it by installing `pikepdf`, CUPS, LibreOffice or any other library on the Pi: nothing goes on the
+host that a container already provides. If a test needs a new library, add it to the image
+(`python-jobs/Dockerfile` / `requirements.txt`).
+
 This Pi is set up by the public `pi-bootstrap` repo, cloned at `~/claude/pi-bootstrap`. Changes to how
 the Pi is installed (packages, services, timers, this file) belong there: change it, re-run the
 relevant script here to test (`bash ~/claude/pi-bootstrap/claude-remote.sh`, or `bootstrap.sh`), then
