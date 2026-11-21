@@ -44,7 +44,7 @@ One-off debugging tools you remove afterwards are the only exception; say so if 
 
 ## Projects and GitHub
 - `gh` is signed in as me (all repos, create repos, releases); git uses it for `https://github.com/...`.
-  The docker repo uses its own SSH deploy key.
+  The docker repo too (its old SSH deploy key is no longer used).
 - Projects live in `~/claude/<name>`, like on the laptop. New ones: `/new-project` (private repo,
   git-crypt encrypted to my GPG public key). Sync state: `/git-check`; each session starts with it.
 - My GPG key is on this Pi (same as the laptop), so every repo unlocks: clone, then `git-crypt unlock`.

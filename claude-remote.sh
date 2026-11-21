@@ -107,7 +107,7 @@ else
   gh auth status >/dev/null 2>&1 || die "gh is not signed in; re-run to try again"
   ok "gh signed in as $(gh api user --jq .login)"
 fi
-gh auth setup-git; ok "git uses gh for https://github.com (the docker repo keeps its SSH deploy key)"
+gh auth setup-git; ok "git uses gh for https://github.com"
 if [ -d "$WORKDIR/pi-bootstrap/.git" ]; then
   ok "$WORKDIR/pi-bootstrap present (setup changes are made and pushed there)"
 else

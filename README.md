@@ -29,8 +29,8 @@ After the one-time sudo password, it asks **five questions** and then runs unatt
 | Prompt | When | What to give it |
 |---|---|---|
 | **sudo password** | only if `pi` can't sudo without one | the `pi` password set in Imager (asked once; then passwordless sudo is set up) |
-| **Question 1/5 — bootstrap passphrase** | only if GitHub doesn't accept this Pi yet or `~/claude/docker` needs unlocking | Answer Enter (yes), then type the passphrase when `age` asks. It decrypts [`secrets.age`](#secrets-bundle) and supplies both the deploy key and the git-crypt key |
-| *(fallback)* GitHub token | if you answer `n` above, or the bundle can't be opened | a [fine-grained token](https://github.com/settings/personal-access-tokens/new): *Only select repositories → `docker`*, permission *Administration: Read and write*, short expiry. Registers this Pi's own deploy key, then discarded. Enter = add the printed key by hand |
+| **Question 1/5 — bootstrap passphrase** | only if `gh` isn't signed in to GitHub, `~/claude/docker` needs unlocking, or your GPG key is missing | Answer Enter (yes), then type the passphrase when `age` asks. It decrypts [`secrets.age`](#secrets-bundle): `gh` signs in with the bundled **GitHub token** (no code to approve), and it supplies the git-crypt key and your GPG key |
+| *(fallback)* GitHub code | if you answer `n` above, the bundle can't be opened, or it has no token (made before 2026-11-20) | `gh` shows a code: open https://github.com/login/device on your phone, enter it, approve |
 | *(fallback)* git-crypt key | same | one base64 line: `cd ~/claude/docker && git-crypt export-key - \| base64 -w0; echo` (or the copy in Drive) |
 | **Question 2/5 — Wi-Fi chip** | unless already disabled | `y` adds `dtoverlay=disable-wifi` to `/boot/firmware/config.txt` (default **No**). Warns first if you are connected over Wi-Fi or Ethernet has no link |
 | **Question 3/5 — Bluetooth chip** | unless already disabled | `y` adds `dtoverlay=disable-bt` and disables the `bluetooth` service (default **No**) |
@@ -51,7 +51,7 @@ and heat; the trade-off is losing Wi-Fi as a backup link if Ethernet fails.
 | Step | |
 |---|---|
 | 1/8 | Passwordless sudo for `pi` (Raspberry Pi OS default; Imager's setup omits it) |
-| — | Questions 1/5–4/5 (above). Question 1/5 also creates `~/.ssh/id_ed25519_github` (github.com only), checks github.com's published fingerprint and registers the deploy key |
+| — | Questions 1/5–4/5 (above). Question 1/5 also installs `gh` if needed and lets `git` use it for `https://github.com` |
 | 2/8 | `apt install` git, git-crypt, docker.io, docker-compose (Compose v2), zsh, zsh-syntax-highlighting, zsh-autosuggestions, network monitors nload, iftop, vnstat, smartmontools (SSD health; its always-on `smartd` is switched off, see health report), gh and tcpdump |
 | 3/8 | Adds `pi` to the `docker` group; caps container logs (`/etc/docker/daemon.json`: 10 MB × 3 per container); sets **backup DNS** (1.1.1.1 and 9.9.9.9 first, then the router, 2 s timeout, on the NetworkManager connection; on 2026-11-20 the router's DNS failed for 5 hours and crashed Remote Control 188 times); keeps the **system log on disk** (Pi OS keeps it in RAM only, so each reboot wiped it and it held only hours; now `/var/log/journal`, max 500 MB / 2 months); makes zsh the login shell, installs [`zshrc`](zshrc) as `~/.zshrc` (existing one backed up), which puts the stack's custom scripts (`~/claude/docker/python-jobs/jobs`: `messenger`, `ren`, `run`, …) on PATH |
 | 4/8 | Creates `~/movies`, `~/movies_archive`, `~/Downloads` (paths used by the stack's `.env`) |
@@ -92,21 +92,23 @@ factor 2^18). Inside is a tar with these fixed names:
 
 | File | Used as |
 |---|---|
-| `deploy_key`, `deploy_key.pub` | a **shared** read-write GitHub deploy key for the `docker` repo (titled *opi shared (pi-bootstrap …)*), installed as `~/.ssh/id_ed25519_github` |
+| `github-token` | a classic GitHub token (note *pi-bootstrap*; scopes `repo`, `workflow`, `read:org`): `gh auth login --with-token`, then `git` uses `gh` for every `https://github.com` repo. Replaces the shared deploy key older bundles had |
 | `gitcrypt.key` | the `docker` repo's git-crypt key, used once for `git-crypt unlock` and then shredded |
 | `gpg-secret.asc` | **your GPG key** (since 2026-11-20), imported with ultimate trust when the Pi doesn't have it: the Pi then unlocks every git-crypt repo, like the laptop. Bundles without it still work |
 
-- **Create / rotate** (laptop, real terminal): `./make-secrets.sh` — generates a new shared deploy key,
-  encrypts the bundle (press Enter at age's prompt to get a strong generated passphrase; save it in Drive),
-  makes you decrypt once to prove the saved passphrase, registers the key, and offers to delete the old
-  shared key. Then commit and push `secrets.age`.
+- **Create / rotate** (a real terminal: laptop, or the Pi over SSH): `./make-secrets.sh`. It shows a
+  prefilled link to create the GitHub token, checks it works and has the scopes, exports the git-crypt and
+  GPG keys, encrypts the bundle (press Enter at age's prompt to get a strong generated passphrase; save it in
+  Drive), and makes you decrypt once to prove the saved passphrase. It also offers to delete deploy keys
+  left from older bundles. Then commit and push `secrets.age`; revoke the previous token if you replaced it.
 - **Check** any time (on a Pi): `bootstrap.sh --check-secrets`. It proves the passphrase opens the bundle,
-  the deploy key authenticates, the git-crypt key matches `~/claude/docker`, and the GPG key is yours.
+  the GitHub token works and has its scopes, the git-crypt key matches `~/claude/docker`, and the GPG key is yours.
 - **Look inside** without writing files: `age -d secrets.age | tar -tv`.
 - **Security:** the file is public, so its protection is the passphrase alone; a strong generated one is
-  infeasible to brute-force. Anyone with the passphrase gets read-write access to the `docker` repo and its
-  secrets, **and your GPG key, which unlocks every repo** (it has no passphrase of its own). If it may have leaked: run `make-secrets.sh` (new key + passphrase), delete the old deploy key,
-  and change the secrets inside the `docker` repo (the git-crypt key itself can't be revoked).
+  infeasible to brute-force. Anyone with the passphrase gets **write access to all your GitHub repos**
+  (the token) **and your GPG key, which unlocks every repo** (it has no passphrase of its own). If it may
+  have leaked: revoke the token at https://github.com/settings/tokens, run `make-secrets.sh` (new token +
+  passphrase), and change the secrets inside your repos (git-crypt and GPG keys can't be revoked).
 
 ## After it finishes
 
@@ -126,7 +128,7 @@ claude.ai/code), and any session you start there runs *on the Pi*.
 | Install | Anthropic's native installer → `~/.local/bin/claude` (on PATH via `zshrc`); `claude-update.timer` runs `claude update` on Sundays 04:30 and messages you when the version changed (Claude Code's own auto-update is off for this install) |
 | Sign-in | your claude.ai subscription, stored in `~/.claude/.credentials.json` (mode 600, never in this repo) |
 | Services | `claude-signin.service` (renewal, below) and `claude-remote.service`: `claude remote-control` as `pi`, started at boot, restarted 30 s after any exit |
-| GitHub | `gh` signed in as you (device code approved on the phone): push to every repo, create repos, releases. `git` uses it for https URLs; `~/claude/docker` keeps its SSH deploy key. pi-bootstrap is cloned at `~/claude/pi-bootstrap` |
+| GitHub | `gh` signed in as you (bundled token, or a device code approved on the phone): push to every repo, create repos, releases. `git` uses it for every https URL, `~/claude/docker` included. pi-bootstrap is cloned at `~/claude/pi-bootstrap` |
 | Your laptop setup | `/new-project` and `/git-check` ([`opi-claude/commands/`](opi-claude/commands)), the session-start sync check ([`opi-claude/hooks/sync-check.sh`](opi-claude/hooks/sync-check.sh)), and your GPG **public** key ([`opi-claude/gpg-public.asc`](opi-claude/gpg-public.asc)). The **secret** key comes from the secrets bundle (question 1/5), so the Pi unlocks all your repos like the laptop |
 | Sessions start in | `~/claude` (`CLAUDE_WORKDIR`); Claude can still `cd` anywhere and use `sudo` |
 | House rules | [`opi-CLAUDE.md`](opi-CLAUDE.md) → `~/claude/CLAUDE.md`, read by every session: **phone first** (Claude runs every command itself and sends you links/codes in the chat or by `messenger`, never "use the laptop"), layout, projects, releases, git (pull first, push after each commit), secrets, what to ask before doing. Re-running replaces it (old copy kept as `CLAUDE.md.bak.<time>`) |
@@ -210,5 +212,5 @@ Matches the laptop's look without oh-my-zsh:
 
 Tested on the live opi (Pi 4, Raspberry Pi OS trixie, Nov 2026): first run installs zsh and the
 plugins; a re-run skips every step; a fresh clone + unlock into a scratch directory via
-`GITCRYPT_KEY_B64` produced a clean, decrypted checkout with no key files left behind; the deploy-key
-API call was verified (201 created, 422 already registered).
+`GITCRYPT_KEY_B64` produced a clean, decrypted checkout with no key files left behind. (Deploy keys were
+replaced by the bundled GitHub token on 2026-11-20.)
