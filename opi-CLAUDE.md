@@ -55,6 +55,11 @@ network, sudoers, journald, Docker daemon), stop before calling the task done an
 3. commit and push pi-bootstrap, and mention it in your reply
 One-off debugging tools you remove afterwards are the only exception; say so if you skip this.
 
+**~/README is my cheat sheet** (pi-bootstrap's `home-README`, installed by `bootstrap.sh`): one line
+per task with the exact command ("to ssh into the router: `ssh router`"), no explanations. When you
+set up or change something I use (an access path, a service, a command, a bot command), add or fix
+its line there in the same task, test the command, and re-run `bootstrap.sh` to install it.
+
 ## Projects and GitHub
 - `gh` is signed in as me (all repos, create repos, releases); git uses it for `https://github.com/...`.
   The docker repo too (its old SSH deploy key is no longer used).

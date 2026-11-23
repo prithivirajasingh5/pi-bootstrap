@@ -1,0 +1,49 @@
+opi — how to do things
+Installed by pi-bootstrap (file home-README in that repo); edits here are replaced on the next run.
+Details: ~/claude/docker/README.md, ~/claude/docker/RESTORE.md, ~/claude/pi-bootstrap/README.md
+
+SSH
+  into the router (from this Pi)          ssh router
+  into this Pi (from another device)      ssh -i ~/.ssh/opi_ed25519 pi@192.168.1.11
+                                          (keys only, no passwords; the key + how-to: GitHub repo ssh-keys)
+  get my SSH keys on a new device         gh repo clone prithivirajasingh5/ssh-keys && cd ssh-keys && git-crypt unlock
+
+WireGuard (VPN into home from outside)
+  phone: show a peer's QR code to scan    docker exec wireguard /app/show-peer prip
+                                          (peers: prip pril nithp nithl others1 others2 others3 others4)
+  laptop: import this config file         ~/claude/docker/wireguard/config/peer_prip/peer_prip.conf
+  server address                          opi.prithivirajasingh.com:51820 (UDP)
+  who is connected                        docker exec wireguard wg show
+
+Files and media
+  shares, Windows                         \\192.168.1.11\Movies   \\192.168.1.11\Archives   \\192.168.1.11\samba_share
+  shares, macOS / Linux / phone           smb://192.168.1.11/Movies
+  qBittorrent web                         http://192.168.1.11:8080
+
+Docker stack
+  status of all containers                cd ~/claude/docker && docker compose ps
+  logs of one container                   docker logs --tail 30 <container>
+  apply a change to one service           cd ~/claude/docker && docker compose up -d <service>
+  run the tests                           ~/claude/docker/python-jobs/run-tests
+
+Router and network
+  router web page                         http://192.168.1.1
+  put our router scripts back             bash ~/claude/docker/router/install.sh --enable
+  network watch summary                   cat ~/claude/docker/shared/netwatch/summary.txt
+  network watch alerts                    tail ~/claude/docker/shared/netwatch/alerts.jsonl
+
+Telegram bot
+  list its commands                       send "ls" to the bot
+  devices on the network / block one      send "router ls" / "router tv block 30m"
+  send a message from this Pi             messenger "text"
+
+Claude Code
+  use it                                  Claude app -> Code -> opi
+  is it running                           systemctl status claude-remote
+  renew sign-in                           send "claude login" to the Telegram bot, then "claude <code>"
+  update it now                           /usr/local/bin/claude-weekly-update
+
+Health and setup
+  health facts now                        AI=0 SEND=0 health-report
+  full health report to Telegram          sudo systemctl start health-report
+  re-run the Pi setup (safe to repeat)    bash ~/claude/pi-bootstrap/bootstrap.sh

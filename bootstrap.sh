@@ -739,8 +739,16 @@ sudo systemctl enable --now health-report.timer >/dev/null 2>&1
 ok "health-report timer enabled (Sundays 10:00; on demand: sudo systemctl start health-report)"
 
 # =========================================================================================
+# ~/README: a short "how do I ..." list with the exact commands (home-README in this repo).
+# Add a line there whenever something new is set up that the owner uses.
+rd_tmp="$(mktemp)"; fetch home-README "$rd_tmp"
+if cmp -s "$rd_tmp" "$HOME/README"; then ok "~/README up to date"
+else install -m 0644 "$rd_tmp" "$HOME/README"; ok "installed ~/README (how to do things here)"; fi
+rm -f "$rd_tmp"
+
 step "Finished"
 info "Log out and back in (or run: exec zsh) for zsh and the docker group to take effect."
 info "If a container is unhealthy, see the Troubleshooting table in $STACK_DIR/RESTORE.md"
 [ "$NEED_REBOOT" -eq 1 ] && warn "Reboot to switch the chip(s) off: sudo reboot   (containers restart automatically)"
+printf '\n\033[1mNext: read ~/README (how to ssh, wireguard, shares, ...):   cat ~/README\033[0m\n'
 exit 0
