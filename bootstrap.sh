@@ -683,6 +683,29 @@ if [ -f "$STACK_DIR/host/container-watchdog.timer" ]; then
   ok "container-watchdog timer enabled (every 5 min; logs: journalctl -u container-watchdog)"
 fi
 
+# SSH: keys only. With passwords on, anything on the LAN or a WireGuard tunnel could guess pi's
+# password, and pi has passwordless sudo. The owner's key (private half backed up in the private
+# ssh-keys repo, with instructions) is authorized first, so this can't lock the owner out.
+# 10- sorts before Raspberry Pi Imager's 50-cloud-init.conf ("PasswordAuthentication yes"): sshd
+# keeps the first value it reads for each setting.
+OWNER_SSH_KEY="$(cat <<'KEY'
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJqz6ZEBXUL8MBfZx1rwLpKbnKgTIAQhRXAySj8LSxbx owner@opi (ssh-keys repo)
+KEY
+)"
+install -d -m 700 "$HOME/.ssh"; touch "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"
+if grep -qxF "$OWNER_SSH_KEY" "$HOME/.ssh/authorized_keys"; then ok "owner's SSH key already authorized"
+else printf '%s\n' "$OWNER_SSH_KEY" >> "$HOME/.ssh/authorized_keys"; ok "authorized the owner's SSH key"; fi
+keys_conf="# pi-bootstrap: SSH logins with keys only (see bootstrap.sh)
+PasswordAuthentication no
+KbdInteractiveAuthentication no"
+if [ "$(sudo cat /etc/ssh/sshd_config.d/10-keys-only.conf 2>/dev/null)" = "$keys_conf" ]; then
+  ok "SSH: keys only (password login off)"
+else
+  printf '%s\n' "$keys_conf" | sudo tee /etc/ssh/sshd_config.d/10-keys-only.conf >/dev/null
+  if sudo sshd -t; then sudo systemctl reload ssh; ok "SSH: password login turned off (keys only)"
+  else sudo rm -f /etc/ssh/sshd_config.d/10-keys-only.conf; die "sshd rejected 10-keys-only.conf; removed it"; fi
+fi
+
 # Weekly health report (health-report.sh): facts of the week -> Claude's diagnosis -> Telegram.
 hr_tmp="$(mktemp)"; fetch health-report.sh "$hr_tmp"
 if ! cmp -s "$hr_tmp" /usr/local/bin/health-report; then sudo install -m 0755 "$hr_tmp" /usr/local/bin/health-report; fi
