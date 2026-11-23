@@ -54,7 +54,8 @@ GPG_KEY=36495943FBDA0DF535B6FBA2E9A09FE2F41B0BFC   # your GPG key: git-crypt in 
 PACKAGES=(git git-crypt docker.io docker-compose zsh zsh-syntax-highlighting zsh-autosuggestions curl ca-certificates
           nload iftop vnstat    # network: live graph / per-connection / live + daily-monthly history
           smartmontools gh      # SSD health for health-report; GitHub CLI
-          tcpdump)              # packet capture for network debugging
+          tcpdump               # packet capture for network debugging
+          unattended-upgrades)  # installs Debian security fixes daily (configured below)
 SECRETS_URL="$BOOTSTRAP_RAW/secrets.age"
 CONFIG_TXT=/boot/firmware/config.txt; [ -f "$CONFIG_TXT" ] || CONFIG_TXT=/boot/config.txt   # older Pi OS
 
@@ -402,6 +403,21 @@ else
   printf '%s\n' "$want_journald" | sudo tee /etc/systemd/journald.conf.d/90-persistent.conf >/dev/null
   sudo systemctl restart systemd-journald && sudo journalctl --flush
   ok "system log now kept on disk (/var/log/journal, max 500 MB / 2 months)"
+fi
+
+# Automatic security updates (daily, Debian-Security only; added 2026-11-22). Never reboots by
+# itself (a kernel fix waits for a manual reboot), and never touches Docker: docker.io ships through
+# Debian-Security, and upgrading it restarts every container (nginx, WireGuard, SMB) at a random time.
+# Docker and the kernel are updated by hand: sudo apt full-upgrade, then reboot.
+want_uu=$'// opi (pi-bootstrap): security fixes only, no Docker, no automatic reboot\n#clear Unattended-Upgrade::Origins-Pattern;\nUnattended-Upgrade::Origins-Pattern {\n        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";\n};\nUnattended-Upgrade::Package-Blacklist {\n        "docker.io";\n        "docker-cli";\n        "docker-compose";\n        "containerd";\n        "runc";\n};\nUnattended-Upgrade::Automatic-Reboot "false";\nUnattended-Upgrade::Remove-Unused-Dependencies "true";'
+want_auto=$'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";'
+if [ "$(cat /etc/apt/apt.conf.d/52opi-unattended-upgrades 2>/dev/null)" = "$want_uu" ] \
+   && [ "$(cat /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null)" = "$want_auto" ]; then
+  ok "automatic security updates already on"
+else
+  printf '%s\n' "$want_uu" | sudo tee /etc/apt/apt.conf.d/52opi-unattended-upgrades >/dev/null
+  printf '%s\n' "$want_auto" | sudo tee /etc/apt/apt.conf.d/20auto-upgrades >/dev/null
+  ok "automatic security updates on (daily; no Docker, no reboot)"
 fi
 
 # Backup DNS: public resolvers first, the router (from DHCP) after them, 2 s timeout. On 2026-11-20 the
