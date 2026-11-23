@@ -59,6 +59,8 @@ One-off debugging tools you remove afterwards are the only exception; say so if 
 per task with the exact command ("to ssh into the router: `ssh router`"), no explanations. When you
 set up or change something I use (an access path, a service, a command, a bot command), add or fix
 its line there in the same task, test the command, and re-run `bootstrap.sh` to install it.
+Whenever `bootstrap.sh` or `claude-remote.sh` changes, check `home-README` too: a new, moved or
+removed setup step may need its cheat-sheet line added or fixed.
 
 ## Projects and GitHub
 - `gh` is signed in as me (all repos, create repos, releases); git uses it for `https://github.com/...`.

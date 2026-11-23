@@ -18,6 +18,9 @@
 # except what git-crypt itself keeps in ~/claude/docker/.git/git-crypt/keys/ and the router SSH key
 # (~/.ssh/netblock_router, copied from the unlocked .env after step 7).
 #
+# Changing this script (or claude-remote.sh)? Check home-README (installed as ~/README, the owner's
+# cheat sheet of exact commands) and update any line the change adds, moves or breaks.
+#
 # Question 1/5 normally needs only your bootstrap passphrase: it decrypts secrets.age (made by
 # make-secrets.sh) holding a GitHub token, the docker repo's git-crypt key and your GPG key, so no
 # GitHub code is needed. Fallback: a GitHub code approved on your phone + pasted git-crypt key.
