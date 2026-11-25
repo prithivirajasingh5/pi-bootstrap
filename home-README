@@ -19,6 +19,7 @@ Files and media
   shares, Windows                         \\192.168.1.11\Movies   \\192.168.1.11\Archives   \\192.168.1.11\samba_share
   shares, macOS / Linux / phone           smb://192.168.1.11/Movies
   qBittorrent web                         http://192.168.1.11:8080
+  torrent watcher: what it did            docker logs --tail 30 torrentwatch
 
 Docker stack
   status of all containers                cd ~/claude/docker && docker compose ps

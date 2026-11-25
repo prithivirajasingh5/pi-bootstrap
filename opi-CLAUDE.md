@@ -17,6 +17,11 @@ password I must type), start it, then:
 - in unattended jobs (timers, scripts): send it with `messenger "text"` (Telegram)
 Only physical work (flashing an SSD, plugging cables) needs anything but the phone; say so plainly.
 
+**Notifying me: Telegram through `messenger`, unless I say otherwise.** Any script, job, watcher or
+alert you build that should tell me something sends it with `messenger "text"` (on PATH in the
+python-jobs containers and on the host). Don't add email, push services or other channels unless I
+ask for them for that task.
+
 ## Layout
 | Where | What |
 |---|---|
