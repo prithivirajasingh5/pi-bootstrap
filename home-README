@@ -36,6 +36,7 @@ Router and network
 Telegram bot
   list its commands                       send "ls" to the bot
   devices on the network / block one      send "router ls" / "router tv block 30m"
+  tell me when a device comes / goes      send "router bathroom-light notify" (stop: "... notify off")
   send a message from this Pi             messenger "text"
 
 Claude Code
