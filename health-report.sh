@@ -117,6 +117,9 @@ for name, n in c.most_common(10): print(f"{n:7} {name}")'
   sec "Home router and network (netwatch)"
   # written hourly by the netwatch container (docker repo: python-jobs/jobs/netwatch.py)
   cat "$STACK_DIR/shared/netwatch/summary.txt" 2>/dev/null || echo "no netwatch summary (container not running?)"
+  # written daily (07:00) by netwatch's netanalyze.py from its 14-day connection history
+  echo; cat "$STACK_DIR/shared/netwatch/week.txt" 2>/dev/null || echo "no connection history summary yet (week.txt)"
+  echo; cat "$STACK_DIR/shared/netwatch/daily.txt" 2>/dev/null || true
 
   sec "Updates"
   sudo -n apt-get update -qq >/dev/null 2>&1
