@@ -142,7 +142,7 @@ for ext in txt diagnosis; do ls -1t "$OUT_DIR"/*."$ext" 2>/dev/null | tail -n +1
 prev="$(ls -1t "$OUT_DIR"/*.txt | grep -vxF "$REPORT" | head -1)"
 prompt="You are the weekly health reviewer for $HOST, the owner's home server: a Raspberry Pi 4 (2 GB RAM, SSD over USB) that runs a Docker homelab stack (~/claude/docker; see its CLAUDE.md) and Claude Code Remote Control, which the owner uses from a phone.
 
-Below is this week's report${prev:+, followed by the report from a week earlier}. You may run read-only commands (journalctl, docker logs, systemctl status) to dig into anything suspicious, e.g. why something restarts often. Change nothing. Never print secrets. Known normal, not issues: qBittorrent.conf and letsencrypt renewal/*.conf in ~/claude/docker always show as modified (the apps rewrite them; they are never committed).
+Below is this week's report${prev:+, followed by the report from a week earlier}. You may run read-only commands (journalctl, docker logs, systemctl status) to dig into anything suspicious, e.g. why something restarts often. Change nothing. Never print secrets. Home network (netwatch section): it lists every alert of the week, every device's 7-day connection picture and the daily check; review all of it, not only the newest. To dig into a device or a time window, run: docker exec netwatch python3 /scripts/netwatch.py report '<YYYY-MM-DD HH:MM>' '<YYYY-MM-DD HH:MM>' [device name or MAC] (14 days of connection history; raw files in ~/claude/docker/shared/netwatch: alerts.jsonl, daily.txt, week.txt, connlog/). Known normal, not issues: qBittorrent.conf and letsencrypt renewal/*.conf in ~/claude/docker always show as modified (the apps rewrite them; they are never committed).
 
 Then reply with ONLY a plain-text Telegram message (no markdown tables, at most about 1500 characters):
 - first line: '🩺 $HOST weekly: all good' or '🩺 $HOST weekly: N things to look at'
@@ -158,7 +158,8 @@ $(cat "$REPORT")"
 $(cat "$prev")"
 
 diag="$(cd "$OUT_DIR" && printf '%s' "$input" | timeout 900 "$CLAUDE" -p "$prompt" --permission-mode default \
-  --allowedTools "Bash(journalctl *)" "Bash(docker logs *)" "Bash(systemctl status *)" "Read" "Grep" 2>&1)"
+  --allowedTools "Bash(journalctl *)" "Bash(docker logs *)" "Bash(systemctl status *)" \
+    "Bash(docker exec netwatch python3 /scripts/netwatch.py report *)" "Read" "Grep" 2>&1)"
 status=$?
 if [ $status -ne 0 ] || [ -z "$diag" ]; then
   diag="🩺 $HOST weekly: Claude could not analyse it (exit $status: $(tail -c 300 <<< "$diag")). Raw report:
